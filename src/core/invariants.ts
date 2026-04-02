@@ -8,21 +8,21 @@ export class InvariantViolationError extends Error {
   }
 }
 
-export function checkToolInvariants(toolName: string, params: Record<string, unknown>): void {
+export function checkToolInvariants(
+  toolName: string,
+  params: Record<string, unknown>,
+  sandboxDir: string,
+): void {
   if (toolName === 'shell') {
-    const command = params.command as string;
-    const violation = checkBlacklist(command);
-    if (violation) {
-      throw new InvariantViolationError(violation);
-    }
+    const violation = checkBlacklist(params.command as string);
+    if (violation) throw new InvariantViolationError(violation);
   }
 
   if (toolName === 'write_file') {
-    const filePath = path.resolve(process.cwd(), params.path as string);
-    const cwd = process.cwd();
-    if (!filePath.startsWith(cwd + path.sep) && filePath !== cwd) {
+    const filePath = path.resolve(sandboxDir, params.path as string);
+    if (!filePath.startsWith(sandboxDir + path.sep) && filePath !== sandboxDir) {
       throw new InvariantViolationError(
-        `write_file: Cannot write outside working directory. Path: ${filePath}`,
+        `write_file: path escapes sandbox. sandbox=${sandboxDir}, path=${filePath}`,
       );
     }
   }

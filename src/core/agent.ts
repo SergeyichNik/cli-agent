@@ -41,6 +41,8 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
   let depth = 0;
   const maxDepth = config.maxToolDepth;
   const maxRetries = config.maxToolRetries;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
 
   // Agentic loop: continue until done or depth exceeded
   while (depth < maxDepth) {
@@ -56,6 +58,9 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
         text += chunk.text;
       } else if (chunk.type === 'tool_call') {
         pendingToolCalls.push({ id: chunk.id, name: chunk.name, arguments: chunk.arguments });
+      } else if (chunk.type === 'usage') {
+        totalInputTokens += chunk.input_tokens;
+        totalOutputTokens += chunk.output_tokens;
       } else if (chunk.type === 'done') {
         if (chunk.finish_reason === 'stop') {
           break;
@@ -98,7 +103,7 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
 
       // Invariant check
       try {
-        checkToolInvariants(tc.name, params);
+        checkToolInvariants(tc.name, params, tools.sandboxDir);
       } catch (err) {
         if (err instanceof InvariantViolationError) {
           renderer.showError(`Invariant violation: ${err.message}`);
@@ -140,7 +145,7 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
         sm.consecutiveToolErrors++;
       } else {
         try {
-          const result = await tool.execute(params);
+          const result = await tool.execute(params, tools.context());
           renderer.showToolResult(result);
           sm.consecutiveToolErrors = 0;
           toolResultMessages.push({
@@ -200,10 +205,15 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
       if (chunk.type === 'text') {
         renderer.onToken(chunk.text);
         fullResponseText += chunk.text;
+      } else if (chunk.type === 'usage') {
+        totalInputTokens += chunk.input_tokens;
+        totalOutputTokens += chunk.output_tokens;
       }
     }
     renderer.finalize();
   }
+
+  renderer.showStats(totalInputTokens, totalOutputTokens);
 
   // Parse intent from full response
   const meta = parseMetadataLine(fullResponseText);

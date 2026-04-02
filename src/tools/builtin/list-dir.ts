@@ -1,28 +1,24 @@
 import { readdir, stat } from 'fs/promises';
 import path from 'path';
-import type { Tool } from '../base.js';
+import type { Tool, ToolContext } from '../base.js';
 
 export const listDirTool: Tool = {
   name: 'list_dir',
-  description: 'List files and directories at a path. Path is relative to cwd.',
+  description: 'List files and directories. Path is relative to the sandbox directory.',
   parameters: {
     type: 'object',
     properties: {
-      path: {
-        type: 'string',
-        description: 'Directory path relative to cwd (default: ".")',
-      },
+      path: { type: 'string', description: 'Directory path relative to sandbox dir (default: ".")' },
     },
     required: [],
   },
   requiresConfirmation: false,
-  async execute(params) {
-    const dirPath = path.resolve(process.cwd(), (params.path as string) ?? '.');
+  async execute(params, context: ToolContext) {
+    const dirPath = path.resolve(context.sandboxDir, (params.path as string) ?? '.');
     const entries = await readdir(dirPath);
     const lines = await Promise.all(
       entries.map(async (name) => {
-        const full = path.join(dirPath, name);
-        const s = await stat(full);
+        const s = await stat(path.join(dirPath, name));
         return `${s.isDirectory() ? 'd' : 'f'} ${name}`;
       }),
     );

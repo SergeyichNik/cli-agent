@@ -19,7 +19,13 @@ export interface DoneChunk {
   finish_reason: string;
 }
 
-export type Chunk = TextChunk | ToolCallChunk | DoneChunk;
+export interface UsageChunk {
+  type: 'usage';
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export type Chunk = TextChunk | ToolCallChunk | DoneChunk | UsageChunk;
 
 export interface LLMOptions {
   tools?: ChatCompletionTool[];

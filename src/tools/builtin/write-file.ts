@@ -1,32 +1,24 @@
 import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
-import type { Tool } from '../base.js';
+import type { Tool, ToolContext } from '../base.js';
 
 export const writeFileTool: Tool = {
   name: 'write_file',
-  description: 'Write content to a file. Creates parent directories if needed. Requires user confirmation.',
+  description: 'Write content to a file inside the sandbox directory. Creates parent directories if needed. Requires user confirmation.',
   parameters: {
     type: 'object',
     properties: {
-      path: {
-        type: 'string',
-        description: 'File path relative to cwd',
-      },
-      content: {
-        type: 'string',
-        description: 'Content to write',
-      },
+      path: { type: 'string', description: 'File path relative to sandbox dir' },
+      content: { type: 'string', description: 'Content to write' },
     },
     required: ['path', 'content'],
   },
   requiresConfirmation: true,
-  async execute(params) {
-    const filePath = path.resolve(process.cwd(), params.path as string);
-    const cwd = process.cwd();
+  async execute(params, context: ToolContext) {
+    const filePath = path.resolve(context.sandboxDir, params.path as string);
 
-    // Scope invariant: no writes outside cwd tree
-    if (!filePath.startsWith(cwd + path.sep) && filePath !== cwd) {
-      throw new Error(`write_file: path ${filePath} is outside working directory ${cwd}`);
+    if (!filePath.startsWith(context.sandboxDir + path.sep) && filePath !== context.sandboxDir) {
+      throw new Error(`write_file: path escapes sandbox (${context.sandboxDir})`);
     }
 
     await mkdir(path.dirname(filePath), { recursive: true });

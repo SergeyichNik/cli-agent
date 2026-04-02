@@ -29,6 +29,7 @@ export async function* streamWithRetry(
         model,
         messages: messages as OpenAI.Chat.ChatCompletionMessageParam[],
         stream: true,
+        stream_options: { include_usage: true },
         tools: options.tools,
         temperature: options.temperature ?? 0.7,
         max_tokens: options.maxTokens,
@@ -38,6 +39,15 @@ export async function* streamWithRetry(
       const toolCallAccum: Record<number, { id: string; name: string; arguments: string }> = {};
 
       for await (const chunk of stream) {
+        // Usage arrives in the final chunk (choices may be empty)
+        if (chunk.usage) {
+          yield {
+            type: 'usage',
+            input_tokens: chunk.usage.prompt_tokens,
+            output_tokens: chunk.usage.completion_tokens,
+          };
+        }
+
         const choice = chunk.choices[0];
         if (!choice) continue;
 
@@ -60,7 +70,6 @@ export async function* streamWithRetry(
         }
 
         if (choice.finish_reason) {
-          // Emit completed tool calls
           for (const tc of Object.values(toolCallAccum)) {
             yield { type: 'tool_call', id: tc.id, name: tc.name, arguments: tc.arguments };
           }

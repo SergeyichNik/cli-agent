@@ -1,8 +1,9 @@
 import type { ChatCompletionTool } from 'openai/resources/chat/completions.js';
-import type { Tool } from './base.js';
+import type { Tool, ToolContext } from './base.js';
 
 export class ToolRegistry {
   private tools = new Map<string, Tool>();
+  sandboxDir: string = process.cwd();
 
   register(tool: Tool): void {
     this.tools.set(tool.name, tool);
@@ -10,6 +11,10 @@ export class ToolRegistry {
 
   get(name: string): Tool | undefined {
     return this.tools.get(name);
+  }
+
+  context(): ToolContext {
+    return { sandboxDir: this.sandboxDir };
   }
 
   listForLLM(): ChatCompletionTool[] {

@@ -31,9 +31,10 @@ async function main(): Promise<void> {
   const args = parseArgs();
 
   // Load or create user config
-  let config = userExists(args.user)
-    ? loadConfig(args.user)
-    : await runFirstRunWizard(args.user);
+  if (!userExists(args.user)) {
+    await runFirstRunWizard(args.user);
+  }
+  let config = loadConfig(args.user);
 
   // Apply .env overrides (lower priority than CLI flags)
   const envProvider = process.env.LLM_PROVIDER as 'deepseek' | 'lmstudio' | undefined;
@@ -77,8 +78,18 @@ async function main(): Promise<void> {
   const wm = new WorkingMemory(config.contextWindowTokens);
   const sm = new SessionMemory(sessionId);
 
+  // Resolve sandbox directory (must be inside the project)
+  const rawSandbox = process.env.SANDBOX_DIR ?? './sandbox';
+  const sandboxDir = path.resolve(process.cwd(), rawSandbox);
+  if (!sandboxDir.startsWith(process.cwd())) {
+    console.error(`SANDBOX_DIR must be inside the project root.\n  Got: ${sandboxDir}\n  Root: ${process.cwd()}`);
+    process.exit(1);
+  }
+  mkdirSync(sandboxDir, { recursive: true });
+
   // Register tools
   const tools = new ToolRegistry();
+  tools.sandboxDir = sandboxDir;
   tools.register(readFileTool);
   tools.register(writeFileTool);
   tools.register(listDirTool);
@@ -118,7 +129,9 @@ async function main(): Promise<void> {
       });
     });
 
+  const relSandbox = path.relative(process.cwd(), sandboxDir);
   console.log(`\x1b[32mCLI Agent ready\x1b[0m — user: ${config.userName}, provider: ${config.provider}, model: ${config.model}`);
+  console.log(`Sandbox: \x1b[33m${relSandbox}/\x1b[0m`);
   console.log(`Session: ${sessionId}  |  Type your message. Ctrl+C to exit.\n`);
 
   // Input loop
