@@ -1,0 +1,43 @@
+{
+  "name": "cli-agent",
+  "version": "1.0.0",
+  "description": "CLI Code Assistant Agent with long-term memory and agentic tool execution",
+  "type": "module",
+  "bin": {
+    "cli-agent": "./src/cli/index.ts"
+  },
+  "scripts": {
+    "start": "tsx src/cli/index.ts",
+    "dev": "tsx watch src/cli/index.ts",
+    "build": "tsc",
+    "clean": "node --input-type=module --eval \"import{rmSync}from'node:fs';['data','dist'].forEach(d=>{rmSync(d,{recursive:true,force:true});console.log('Removed '+d)})\"",
+    "clean:user": "tsx scripts/clean-user.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SergeyichNik/cli-agent.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/SergeyichNik/cli-agent/issues"
+  },
+  "homepage": "https://github.com/SergeyichNik/cli-agent#readme",
+  "dependencies": {
+    "@clack/prompts": "^0.9.1",
+    "better-sqlite3": "^12.8.0",
+    "commander": "^12.1.0",
+    "marked": "^12.0.0",
+    "marked-terminal": "^7.1.0",
+    "openai": "^4.52.0",
+    "tiktoken": "^1.0.17",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^20.14.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  }
+}
