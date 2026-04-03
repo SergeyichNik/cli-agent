@@ -5,6 +5,7 @@ export function extractAndSaveFactsAsync(
   provider: LLMProvider,
   conversation: Message[],
   ltm: LongTermMemory,
+  sessionId: string,
 ): void {
   // Fire-and-forget: errors are swallowed to not disrupt the main loop
   Promise.resolve()
@@ -32,7 +33,7 @@ export function extractAndSaveFactsAsync(
 
       const facts = JSON.parse(jsonMatch[0]) as Array<{ key: string; value: string }>;
       for (const { key, value } of facts) {
-        if (key && value) ltm.saveFact(key, String(value));
+        if (key && value) ltm.saveFact(key, String(value), sessionId);
       }
     })
     .catch(() => {

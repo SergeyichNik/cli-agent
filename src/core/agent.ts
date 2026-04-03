@@ -20,16 +20,17 @@ export interface AgentDeps {
   tools: ToolRegistry;
   config: UserConfig;
   renderer: StreamRenderer;
+  sessionId: string;
   debug?: boolean;
   confirmFn: (prompt: string) => Promise<boolean>;
 }
 
 export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promise<void> {
-  const { provider, wm, ltm, sm, tools, config, renderer } = deps;
+  const { provider, wm, ltm, sm, tools, config, renderer, sessionId } = deps;
   const stateMachine = new TaskStateMachine();
   stateMachine.state = sm.taskState;
 
-  const systemPrompt = buildSystemPrompt(config, ltm);
+  const systemPrompt = buildSystemPrompt(config, ltm, sessionId);
   const messages = buildContext(userMessage, systemPrompt, wm, ltm);
 
   // Add user message to WM
@@ -218,9 +219,13 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
   // Parse intent from full response
   const meta = parseMetadataLine(fullResponseText);
   if (meta) {
+    const prevState = stateMachine.state;
     stateMachine.transition(meta.intent);
     sm.taskState = stateMachine.state;
     fullResponseText = stripMetadataLine(fullResponseText);
+    if (prevState !== sm.taskState) {
+      renderer.showStateChange(prevState, sm.taskState, meta.intent);
+    }
   }
 
   // Update WM with assistant response
@@ -228,21 +233,31 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
     wm.add({ role: 'assistant', content: fullResponseText });
   }
 
-  // Track task
+  // Track task: save session on first NEW_TASK, set title from user message
   if (meta?.intent === 'NEW_TASK') {
     sm.currentTask = userMessage.slice(0, 200);
-    ltm.saveSession(sm.sessionId, config.userName, sm.currentTask);
+    ltm.saveSession(sessionId, config.userName, null);
+    // Auto-title from first user message (first 50 chars trimmed)
+    const autoTitle = userMessage.slice(0, 50).trim();
+    ltm.updateSessionTitle(sessionId, autoTitle);
   }
 
   if (sm.taskState === 'DONE' || sm.taskState === 'ERROR') {
-    ltm.endSession(sm.sessionId, sm.currentTask);
+    ltm.endSession(sessionId, sm.currentTask);
   }
 
-  // Background: extract sticky facts
-  extractAndSaveFactsAsync(provider, [...messages], ltm);
+  // Context window percentage — update in DB and show status bar
+  const ctxPct = config.contextWindowTokens > 0
+    ? Math.min(100, Math.round((wm.tokenCount() / config.contextWindowTokens) * 100))
+    : 0;
+  ltm.updateSessionCtxPct(sessionId, ctxPct);
+  renderer.showContextBar(wm.tokenCount(), config.contextWindowTokens);
+
+  // Background: extract sticky facts (session-scoped)
+  extractAndSaveFactsAsync(provider, [...messages], ltm, sessionId);
 
   // Summarize if WM is full
-  await summarizeIfNeeded(provider, wm, ltm, sm.sessionId);
+  await summarizeIfNeeded(provider, wm, ltm, sessionId);
 }
 
 export function createReadlineInput(

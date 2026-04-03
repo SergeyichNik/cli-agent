@@ -25,7 +25,16 @@ import { listDirTool } from '../tools/builtin/list-dir.js';
 import { shellTool } from '../tools/builtin/shell.js';
 import { StreamRenderer } from '../ui/stream.js';
 import { runAgentTurn } from '../core/agent.js';
+import { pickSession } from './session-picker.js';
 import { APIConnectionError, AuthenticationError, RateLimitError, APIError } from 'openai';
+
+function generateSessionId(): string {
+  return new Date()
+    .toISOString()
+    .replace('T', '_')
+    .replace(/:/g, '')
+    .slice(0, 15);
+}
 
 async function main(): Promise<void> {
   const args = parseArgs();
@@ -60,23 +69,50 @@ async function main(): Promise<void> {
       ? new DeepSeekProvider(config.apiKey ?? '', config.model, envDeepSeekUrl)
       : new LMStudioProvider(config.model, lmStudioUrl);
 
-  // Create session ID
-  const sessionId =
-    args.resume ??
-    new Date()
-      .toISOString()
-      .replace('T', '_')
-      .replace(/:/g, '')
-      .slice(0, 15);
-
   // Set up sessions directory for logging
   const sessionsDir = getUserSessionsDir(args.user);
   mkdirSync(sessionsDir, { recursive: true });
 
-  // Init memory
+  // Init LTM (needed before session picker)
   const ltm = new LongTermMemory(getUserLtmPath(args.user));
+
+  // --- Session selection ---
+  let sessionId: string;
+  let isResume = false;
+
+  if (args.resume) {
+    // --resume flag: validate session exists
+    const existing = ltm.getSession(args.resume);
+    if (!existing) {
+      console.error(`Session not found: ${args.resume}`);
+      ltm.close();
+      process.exit(1);
+    }
+    sessionId = args.resume;
+    isResume = true;
+  } else {
+    // Interactive session picker
+    const result = await pickSession(config.userName, ltm);
+    if (result.type === 'new') {
+      sessionId = generateSessionId();
+      isResume = false;
+    } else {
+      sessionId = result.sessionId;
+      isResume = true;
+    }
+  }
+
+  // Init memory
   const wm = new WorkingMemory(config.contextWindowTokens);
   const sm = new SessionMemory(sessionId);
+
+  // On resume: inject saved summaries into WM as context
+  if (isResume) {
+    const summaries = ltm.getSessionSummaries(sessionId);
+    for (const s of summaries) {
+      wm.prependSummary(s.summary);
+    }
+  }
 
   // Resolve sandbox directory (must be inside the project)
   const rawSandbox = process.env.SANDBOX_DIR ?? './sandbox';
@@ -115,7 +151,7 @@ async function main(): Promise<void> {
 
   const renderer = new StreamRenderer();
 
-  // Set up readline for multi-line input (Shift+Enter via escape sequence is terminal-dependent)
+  // Set up readline for multi-line input
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -132,7 +168,7 @@ async function main(): Promise<void> {
   const relSandbox = path.relative(process.cwd(), sandboxDir);
   console.log(`\x1b[32mCLI Agent ready\x1b[0m — user: ${config.userName}, provider: ${config.provider}, model: ${config.model}`);
   console.log(`Sandbox: \x1b[33m${relSandbox}/\x1b[0m`);
-  console.log(`Session: ${sessionId}  |  Type your message. Ctrl+C to exit.\n`);
+  console.log(`Session: ${sessionId}${isResume ? '  \x1b[2m(resumed)\x1b[0m' : ''}  |  Type your message. Ctrl+C to exit.\n`);
 
   // Input loop
   const askUser = (): void => {
@@ -157,9 +193,13 @@ async function main(): Promise<void> {
       }
 
       if (message === '/facts') {
-        const facts = ltm.getFacts();
-        console.log('Stored facts:');
-        for (const f of facts) console.log(`  ${f.key}: ${f.value}`);
+        const facts = ltm.getFactsBySession(sessionId);
+        if (facts.length === 0) {
+          console.log('No facts stored for this session yet.');
+        } else {
+          console.log('Session facts:');
+          for (const f of facts) console.log(`  ${f.key}: ${f.value}`);
+        }
         askUser();
         return;
       }
@@ -168,19 +208,45 @@ async function main(): Promise<void> {
         console.log('\x1b[1mBuilt-in (code-enforced):\x1b[0m');
         console.log('  • shell: blocks rm -rf /, sudo, dd, mkfs, >/dev');
         console.log('  • write_file: blocks writes outside cwd');
-        const custom = config.invariants ?? [];
-        console.log(`\n\x1b[1mCustom (from config.json) [${custom.length}]:\x1b[0m`);
-        if (custom.length === 0) {
+        const globalInvariants = config.invariants ?? [];
+        console.log(`\n\x1b[1mGlobal (from config.json) [${globalInvariants.length}]:\x1b[0m`);
+        if (globalInvariants.length === 0) {
           console.log('  (none — add "invariants": [...] to data/users/<name>/config.json)');
         } else {
-          custom.forEach((inv, i) => console.log(`  ${i + 1}. ${inv}`));
+          globalInvariants.forEach((inv, i) => console.log(`  ${i + 1}. ${inv}`));
+        }
+        const sessionInvariants = ltm.getSessionInvariants(sessionId);
+        console.log(`\n\x1b[1mSession-local [${sessionInvariants.length}]:\x1b[0m`);
+        if (sessionInvariants.length === 0) {
+          console.log('  (none — use /invariant <rule> to add one)');
+        } else {
+          sessionInvariants.forEach((inv, i) => console.log(`  ${i + 1}. ${inv}`));
         }
         askUser();
         return;
       }
 
+      if (message.startsWith('/invariant ')) {
+        const rule = message.slice('/invariant '.length).trim();
+        if (!rule) {
+          renderer.showError('Usage: /invariant <rule text>');
+          askUser();
+          return;
+        }
+        ltm.saveSessionInvariant(sessionId, rule);
+        renderer.showInfo(`Session invariant added: "${rule}"`);
+        askUser();
+        return;
+      }
+
       if (message === '/help') {
-        console.log('Commands: /help  /state  /facts  /invariants  /exit');
+        console.log('Commands:');
+        console.log('  /help                  Show this help');
+        console.log('  /state                 Show current task state');
+        console.log('  /facts                 Show session facts');
+        console.log('  /invariants            Show all invariants (global + session)');
+        console.log('  /invariant <rule>      Add a session-local invariant rule');
+        console.log('  /exit  /quit           Exit the agent');
         askUser();
         return;
       }
@@ -194,6 +260,7 @@ async function main(): Promise<void> {
           tools,
           config,
           renderer,
+          sessionId,
           debug: args.debug,
           confirmFn,
         });

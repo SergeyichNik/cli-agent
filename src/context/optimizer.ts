@@ -3,11 +3,17 @@ import type { WorkingMemory } from '../memory/wm.js';
 import type { LongTermMemory } from '../memory/ltm.js';
 import type { UserConfig } from '../user/profile.js';
 
-export function buildSystemPrompt(config: UserConfig, ltm: LongTermMemory): string {
-  const facts = ltm.getFacts();
+export function buildSystemPrompt(
+  config: UserConfig,
+  ltm: LongTermMemory,
+  sessionId: string,
+): string {
+  const facts = ltm.getFactsBySession(sessionId);
   const factLines = facts.map((f) => `- ${f.key}: ${f.value}`).join('\n');
 
-  const invariantLines = (config.invariants ?? []).map((inv) => `- ${inv}`).join('\n');
+  const sessionInvariants = ltm.getSessionInvariants(sessionId);
+  const allInvariants = [...(config.invariants ?? []), ...sessionInvariants];
+  const invariantLines = allInvariants.map((inv) => `- ${inv}`).join('\n');
 
   return `You are a CLI code assistant agent helping ${config.userName ?? 'the user'}.
 
@@ -15,7 +21,7 @@ export function buildSystemPrompt(config: UserConfig, ltm: LongTermMemory): stri
 - Preferred language: ${config.preferredLanguage ?? 'English'}
 - Response style: ${config.responseStyle ?? 'concise'}
 
-## Known Facts
+## Known Facts (this session)
 ${factLines || '(none yet)'}
 
 ## Rules You Must Follow
