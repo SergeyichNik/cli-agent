@@ -76,8 +76,8 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
     // If no tool calls, we're done
     if (pendingToolCalls.length === 0) break;
 
-    // Process tool calls
-    renderer.stopSpinner();
+    // Flush any buffered text before showing tool calls
+    renderer.finalize();
 
     const toolResultMessages: Message[] = [];
 
@@ -214,8 +214,6 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
     renderer.finalize();
   }
 
-  renderer.showStats(totalInputTokens, totalOutputTokens);
-
   // Parse intent from full response
   const meta = parseMetadataLine(fullResponseText);
   if (meta) {
@@ -227,6 +225,8 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
       renderer.showStateChange(prevState, sm.taskState, meta.intent);
     }
   }
+
+  renderer.showStats(totalInputTokens, totalOutputTokens);
 
   // Update WM with assistant response
   if (fullResponseText.trim()) {

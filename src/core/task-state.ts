@@ -68,16 +68,16 @@ export class TaskStateMachine {
 }
 
 export function parseMetadataLine(text: string): { intent: Intent; rawLine: string } | null {
-  const lineMatch = text.match(/^\s*(\{[^}\n]*"intent"[^}\n]*\})/m);
+  const lineMatch = text.match(/\{[^}\n]*"intent"[^}\n]*\}/);
   if (!lineMatch) return null;
   try {
-    const obj = JSON.parse(lineMatch[1]) as { intent: Intent };
-    return { intent: obj.intent ?? 'OTHER', rawLine: lineMatch[1] };
+    const obj = JSON.parse(lineMatch[0]) as { intent: Intent };
+    return { intent: obj.intent ?? 'OTHER', rawLine: lineMatch[0] };
   } catch {
     return null;
   }
 }
 
 export function stripMetadataLine(text: string): string {
-  return text.replace(/^\s*\{[^}\n]*"intent"[^}\n]*\}\n?/m, '').trimStart();
+  return text.replace(/[ \t]*\{[^\n]*"intent"[^\n]*\}\n?/g, '').trimEnd();
 }
