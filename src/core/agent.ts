@@ -29,6 +29,7 @@ export interface AgentTurnResult {
   options?: string[];
   recommended?: number;
   autoContinue?: boolean;
+  startedExecution?: boolean;
 }
 
 export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promise<AgentTurnResult> {
@@ -252,6 +253,7 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
   // Parse metadata from full response and update task machine
   let pendingOptions: string[] | undefined;
   let pendingRecommended: number | undefined;
+  let startedExecution = false;
   const meta = parseMetadataLine(fullResponseText);
   if (meta) {
     const prevState = sm.taskMachine.state;
@@ -290,6 +292,9 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
     } else {
       // Transition state based on intent
       sm.taskMachine.transition(meta.intent);
+      if (prevState === 'planning' && sm.taskMachine.state === 'execution') {
+        startedExecution = true;
+      }
     }
 
     // Mark step complete after state transition
@@ -345,7 +350,7 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
   await summarizeIfNeeded(provider, wm, ltm, sessionId);
 
   const autoContinue = hitDepthLimit && sm.taskMachine.state === 'execution';
-  return { options: pendingOptions, recommended: pendingRecommended, autoContinue };
+  return { options: pendingOptions, recommended: pendingRecommended, autoContinue, startedExecution };
 }
 
 export function createReadlineInput(

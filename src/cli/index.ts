@@ -325,6 +325,47 @@ async function main(): Promise<void> {
     }
   }
 
+  async function promptExecutionChoice(context: 'start' | 'resume'): Promise<void> {
+    const task = sm.taskMachine.task;
+    const rows = process.stdout.rows ?? 24;
+    process.stdout.write('\n'.repeat(Math.min(6, Math.floor(rows / 4))));
+    rl.pause();
+    let choice: unknown;
+    try {
+      if (context === 'start') {
+        choice = await p.select({
+          message: 'Plan is ready. What would you like to do?',
+          options: [
+            { value: 'execute', label: '\x1b[32mStart execution\x1b[0m', hint: '★ recommended' },
+            { value: 'modify',  label: 'Modify the plan' },
+            { value: 'ask',    label: '\x1b[2mAsk a question\x1b[0m' },
+          ],
+        });
+      } else {
+        const stepInfo = task ? `step ${task.step + 1}/${task.total} — "${task.current}"` : 'in progress';
+        choice = await p.select({
+          message: `Resume execution (${stepInfo})?`,
+          options: [
+            { value: 'execute', label: '\x1b[32mContinue execution\x1b[0m', hint: '★ recommended' },
+            { value: 'ask',    label: 'Ask / discuss the plan' },
+            { value: 'modify', label: '\x1b[2mModify the plan\x1b[0m' },
+          ],
+        });
+      }
+    } finally {
+      rl.resume();
+    }
+    if (p.isCancel(choice) || choice === 'ask' || choice === 'modify') {
+      askUser();
+      return;
+    }
+    // 'execute'
+    const msg = context === 'start'
+      ? '[SYSTEM] The user approved the plan. Begin execution now. Start with step 1.'
+      : '[SYSTEM] The user wants to continue execution. Resume from the current step exactly where you left off.';
+    await handleTurn(msg);
+  }
+
   async function handleTurn(message: string): Promise<void> {
     let result: import('../core/agent.js').AgentTurnResult | undefined;
     try {
@@ -362,6 +403,11 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (result?.startedExecution) {
+      await promptExecutionChoice('start');
+      return;
+    }
+
     if (result?.options?.length) {
       const picked = await presentOptions(result.options, result.recommended);
       if (picked !== null) {
@@ -380,7 +426,11 @@ async function main(): Promise<void> {
     process.exit(0);
   });
 
-  askUser();
+  if (isResume && sm.taskMachine.state === 'execution') {
+    await promptExecutionChoice('resume');
+  } else {
+    askUser();
+  }
 }
 
 main().catch((err) => {
