@@ -41,13 +41,18 @@ export async function arrowSelect<T>(
     readline.emitKeypressEvents(process.stdin);
     const stdin = process.stdin as NodeJS.ReadStream;
     const wasRaw = stdin.isRaw ?? false;
+    // rl.pause() pauses stdin — we must resume it so keypress events arrive,
+    // then restore the paused state afterwards.
+    const wasPaused = stdin.isPaused();
     stdin.setRawMode(true);
+    if (wasPaused) stdin.resume();
 
     render();
 
     function cleanup() {
       process.stdin.removeListener('keypress', onKeypress);
       try { stdin.setRawMode(wasRaw); } catch { /* ignore */ }
+      if (wasPaused) stdin.pause();
     }
 
     function onKeypress(_: unknown, key: { name?: string; ctrl?: boolean }) {
