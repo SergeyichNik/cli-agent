@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import { mkdirSync } from 'fs';
+import type { Task } from '../core/task-state.js';
 
 export interface Fact {
   key: string;
@@ -157,6 +158,9 @@ export class LongTermMemory {
     if (!sessionCols.includes('ctx_pct')) {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN ctx_pct INTEGER NOT NULL DEFAULT 0`);
     }
+    if (!sessionCols.includes('task_json')) {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN task_json TEXT`);
+    }
   }
 
   // --- Facts ---
@@ -282,6 +286,26 @@ export class LongTermMemory {
       return JSON.parse(row.invariants || '[]') as string[];
     } catch {
       return [];
+    }
+  }
+
+  // --- Task state ---
+
+  saveTaskState(sessionId: string, task: Task): void {
+    this.db
+      .prepare('UPDATE sessions SET task_json=? WHERE id=?')
+      .run(JSON.stringify(task), sessionId);
+  }
+
+  getTaskState(sessionId: string): Task | null {
+    const row = this.db
+      .prepare('SELECT task_json FROM sessions WHERE id=?')
+      .get(sessionId) as { task_json: string | null } | undefined;
+    if (!row?.task_json) return null;
+    try {
+      return JSON.parse(row.task_json) as Task;
+    } catch {
+      return null;
     }
   }
 

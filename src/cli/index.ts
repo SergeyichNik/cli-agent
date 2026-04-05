@@ -26,6 +26,7 @@ import { shellTool } from '../tools/builtin/shell.js';
 import { StreamRenderer } from '../ui/stream.js';
 import { runAgentTurn } from '../core/agent.js';
 import { pickSession } from './session-picker.js';
+import * as p from '@clack/prompts';
 import { APIConnectionError, AuthenticationError, RateLimitError, APIError } from 'openai';
 
 function generateSessionId(): string {
@@ -79,6 +80,7 @@ async function main(): Promise<void> {
   // --- Session selection ---
   let sessionId: string;
   let isResume = false;
+  let resumedTask: import('../core/task-state.js').Task | null = null;
 
   if (args.resume) {
     // --resume flag: validate session exists
@@ -99,6 +101,7 @@ async function main(): Promise<void> {
     } else {
       sessionId = result.sessionId;
       isResume = true;
+      resumedTask = result.task;
     }
   }
 
@@ -106,11 +109,14 @@ async function main(): Promise<void> {
   const wm = new WorkingMemory(config.contextWindowTokens);
   const sm = new SessionMemory(sessionId);
 
-  // On resume: inject saved summaries into WM as context
+  // On resume: inject saved summaries into WM as context; restore task state
   if (isResume) {
     const summaries = ltm.getSessionSummaries(sessionId);
     for (const s of summaries) {
       wm.prependSummary(s.summary);
+    }
+    if (resumedTask) {
+      sm.taskMachine.loadTask(resumedTask);
     }
   }
 
@@ -158,12 +164,19 @@ async function main(): Promise<void> {
     terminal: true,
   });
 
-  const confirmFn = (prompt: string): Promise<boolean> =>
-    new Promise((resolve) => {
-      rl.question(prompt, (ans) => {
-        resolve(ans.toLowerCase() === 'y' || ans.toLowerCase() === 'yes');
-      });
+  const confirmFn = (toolLabel: string): Promise<boolean> => {
+    rl.pause();
+    return p.select({
+      message: `Allow \x1b[1m${toolLabel}\x1b[0m?`,
+      options: [
+        { value: false, label: '\x1b[2mNo, skip\x1b[0m' },
+        { value: true,  label: '\x1b[32mYes, allow\x1b[0m' },
+      ],
+    }).then((choice) => {
+      rl.resume();
+      return p.isCancel(choice) ? false : (choice as boolean);
     });
+  };
 
   const relSandbox = path.relative(process.cwd(), sandboxDir);
   console.log(`\x1b[32mCLI Agent ready\x1b[0m — user: ${config.userName}, provider: ${config.provider}, model: ${config.model}`);
@@ -187,7 +200,30 @@ async function main(): Promise<void> {
       }
 
       if (message === '/state') {
-        console.log(`Task state: ${sm.taskState}`);
+        const { task, state } = sm.taskMachine;
+        if (!task || task.total === 0) {
+          console.log(`State: ${state}  (no active task)`);
+        } else {
+          const stateColor =
+            state === 'execution' ? '\x1b[33m' :
+            state === 'validation' ? '\x1b[36m' :
+            state === 'planning' ? '\x1b[34m' :
+            state === 'done' ? '\x1b[32m' :
+            state === 'paused' ? '\x1b[2m' : '\x1b[0m';
+          console.log(`\x1b[1m◈ Task State\x1b[0m`);
+          console.log(`  Task:    ${task.task}`);
+          console.log(`  State:   ${stateColor}${state}\x1b[0m`);
+          console.log(`  Steps:   ${task.step}/${task.total}`);
+          task.plan.forEach((step, i) => {
+            const icon =
+              i < task.step ? `\x1b[32m✓\x1b[0m` :
+              i === task.step ? `${stateColor}●\x1b[0m` :
+              `\x1b[2m○\x1b[0m`;
+            const text = i === task.step ? step : `\x1b[2m${step}\x1b[0m`;
+            const current = i === task.step ? '  \x1b[2m← current\x1b[0m' : '';
+            console.log(`  ${icon} ${text}${current}`);
+          });
+        }
         askUser();
         return;
       }
@@ -242,7 +278,7 @@ async function main(): Promise<void> {
       if (message === '/help') {
         console.log('Commands:');
         console.log('  /help                  Show this help');
-        console.log('  /state                 Show current task state');
+        console.log('  /state                 Show current task state and plan progress');
         console.log('  /facts                 Show session facts');
         console.log('  /invariants            Show all invariants (global + session)');
         console.log('  /invariant <rule>      Add a session-local invariant rule');
@@ -251,48 +287,79 @@ async function main(): Promise<void> {
         return;
       }
 
-      try {
-        await runAgentTurn(message, {
-          provider,
-          wm,
-          ltm,
-          sm,
-          tools,
-          config,
-          renderer,
-          sessionId,
-          debug: args.debug,
-          confirmFn,
-        });
-      } catch (err) {
-        renderer.reset();
-        if (err instanceof APIConnectionError) {
-          const url = config.provider === 'lmstudio' ? lmStudioUrl : 'https://api.deepseek.com';
-          renderer.showError(`Cannot connect to ${config.provider} at ${url}`);
-          if (config.provider === 'lmstudio') {
-            renderer.showInfo('  → Is LM Studio running? Check: Server > Start Server');
-            renderer.showInfo('  → Override URL: LMSTUDIO_BASE_URL=http://... in .env');
-          } else {
-            renderer.showInfo('  → Check your internet connection');
-          }
-        } else if (err instanceof AuthenticationError) {
-          renderer.showError('Authentication failed — invalid API key');
-          renderer.showInfo('  → Set DEEPSEEK_API_KEY in .env or run the first-run wizard');
-        } else if (err instanceof RateLimitError) {
-          renderer.showError('Rate limit reached');
-          renderer.showInfo('  → Wait a moment before sending the next message');
-        } else if (err instanceof APIError) {
-          renderer.showError(`API error ${err.status}: ${err.message}`);
-        } else {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          renderer.showError(`Agent error: ${errMsg}`);
-        }
-        if (args.debug && err instanceof Error) console.error(err.stack);
-      }
-
-      console.log();
-      askUser();
+      await handleTurn(message);
     });
+  };
+
+  const agentDeps = {
+    provider, wm, ltm, sm, tools, config, renderer, sessionId,
+    debug: args.debug, confirmFn,
+  };
+
+  async function presentOptions(options: string[], recommended?: number): Promise<string | null> {
+    process.stdout.write('\n\x1b[1mChoose an option:\x1b[0m\n');
+    options.forEach((o, i) => {
+      const hint = i === recommended ? '  \x1b[2m★ recommended\x1b[0m' : '';
+      process.stdout.write(`  \x1b[1m${i + 1}.\x1b[0m ${o}${hint}\n`);
+    });
+    process.stdout.write(`  \x1b[1m${options.length + 1}.\x1b[0m \x1b[2mType your own response\x1b[0m\n\n`);
+
+    return new Promise((resolve) => {
+      rl.question(
+        `\x1b[2mEnter number [1–${options.length + 1}] or press Enter to type manually:\x1b[0m `,
+        (ans) => {
+          const n = parseInt(ans.trim(), 10);
+          if (!ans.trim() || isNaN(n) || n < 1 || n > options.length) {
+            resolve(null);
+            return;
+          }
+          resolve(options[n - 1] ?? null);
+        },
+      );
+    });
+  }
+
+  async function handleTurn(message: string): Promise<void> {
+    let result: import('../core/agent.js').AgentTurnResult | undefined;
+    try {
+      result = await runAgentTurn(message, agentDeps);
+    } catch (err) {
+      renderer.reset();
+      if (err instanceof APIConnectionError) {
+        const url = config.provider === 'lmstudio' ? lmStudioUrl : 'https://api.deepseek.com';
+        renderer.showError(`Cannot connect to ${config.provider} at ${url}`);
+        if (config.provider === 'lmstudio') {
+          renderer.showInfo('  → Is LM Studio running? Check: Server > Start Server');
+          renderer.showInfo('  → Override URL: LMSTUDIO_BASE_URL=http://... in .env');
+        } else {
+          renderer.showInfo('  → Check your internet connection');
+        }
+      } else if (err instanceof AuthenticationError) {
+        renderer.showError('Authentication failed — invalid API key');
+        renderer.showInfo('  → Set DEEPSEEK_API_KEY in .env or run the first-run wizard');
+      } else if (err instanceof RateLimitError) {
+        renderer.showError('Rate limit reached');
+        renderer.showInfo('  → Wait a moment before sending the next message');
+      } else if (err instanceof APIError) {
+        renderer.showError(`API error ${err.status}: ${err.message}`);
+      } else {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        renderer.showError(`Agent error: ${errMsg}`);
+      }
+      if (args.debug && err instanceof Error) console.error(err.stack);
+    }
+
+    console.log();
+
+    if (result?.options?.length) {
+      const picked = await presentOptions(result.options, result.recommended);
+      if (picked !== null) {
+        await handleTurn(picked);
+        return;
+      }
+    }
+
+    askUser();
   };
 
   // Handle Ctrl+C gracefully

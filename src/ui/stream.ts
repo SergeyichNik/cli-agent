@@ -1,4 +1,5 @@
 import { renderMarkdown } from './renderer.js';
+import type { Task, TaskState } from '../core/task-state.js';
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
@@ -84,8 +85,15 @@ export class StreamRenderer {
   }
 
   private stripMetadataLine(text: string): string {
-    // Remove the {"intent":...} JSON wherever the LLM places it (start, middle, or end)
-    return text.replace(/[ \t]*\{[^\n]*"intent"[^\n]*\}\n?/g, '').trimEnd();
+    return text
+      .split('\n')
+      .filter((line) => {
+        const t = line.trim();
+        if (!t.startsWith('{') || !t.includes('"intent"')) return true;
+        try { JSON.parse(t); return false; } catch { return true; }
+      })
+      .join('\n')
+      .trimEnd();
   }
 
   // --- Stats bar ---
@@ -138,6 +146,55 @@ export class StreamRenderer {
 
   showInfo(msg: string): void {
     process.stdout.write(`\x1b[33m${msg}\x1b[0m\n`);
+  }
+
+  showTaskProgress(task: Task): void {
+    if (task.total === 0) {
+      const stateColor = this.taskStateColor(task.state);
+      process.stdout.write(`${stateColor}${task.state}\x1b[0m\n`);
+      return;
+    }
+
+    const stateColor = this.taskStateColor(task.state);
+    const stateLabel = `${stateColor}${task.state}\x1b[0m`;
+
+    if (task.state === 'done') {
+      process.stdout.write(
+        `\x1b[32m✓ All ${task.total} step${task.total !== 1 ? 's' : ''} completed\x1b[0m\n`,
+      );
+      return;
+    }
+
+    // Line 1: state + progress bar + step counter + current step
+    const pct = task.total > 0 ? task.step / task.total : 0;
+    const filled = Math.round(pct * 10);
+    const bar = `${stateColor}${'█'.repeat(filled)}\x1b[2m${'░'.repeat(10 - filled)}\x1b[0m`;
+    const stepLabel = `\x1b[1m${task.step}/${task.total}\x1b[0m`;
+    const currentText = task.current ? `  \x1b[2m›\x1b[0m  ${task.current}` : '';
+    process.stdout.write(`${stateLabel}  [${bar}]  Step ${stepLabel}${currentText}\n`);
+
+    // Steps list (one per line)
+    for (let i = 0; i < task.plan.length; i++) {
+      const step = task.plan[i];
+      if (i < task.step) {
+        process.stdout.write(`  \x1b[32m✓\x1b[0m \x1b[2m${step}\x1b[0m\n`);
+      } else if (i === task.step) {
+        process.stdout.write(`  ${stateColor}●\x1b[0m ${step}\n`);
+      } else {
+        process.stdout.write(`  \x1b[2m○ ${step}\x1b[0m\n`);
+      }
+    }
+  }
+
+  private taskStateColor(state: TaskState): string {
+    switch (state) {
+      case 'planning':   return '\x1b[34m'; // blue
+      case 'execution':  return '\x1b[33m'; // yellow
+      case 'validation': return '\x1b[36m'; // cyan
+      case 'done':       return '\x1b[32m'; // green
+      case 'paused':     return '\x1b[2m';  // dim
+      default:           return '\x1b[0m';
+    }
   }
 
   showContextBar(usedTokens: number, maxTokens: number): void {
