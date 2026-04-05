@@ -10,7 +10,7 @@ export const UserConfigSchema = z.object({
   provider: z.enum(['deepseek', 'lmstudio']).default('lmstudio'),
   model: z.string().default('local-model'),
   apiKey: z.string().optional(),
-  contextWindowTokens: z.number().default(4000),
+  contextWindowTokens: z.number().default(32000),
   invariants: z.array(z.string()).default([]),
   maxToolDepth: z.number().default(10),
   maxToolRetries: z.number().default(3),
