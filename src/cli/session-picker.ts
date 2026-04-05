@@ -1,4 +1,4 @@
-import * as p from '@clack/prompts';
+import { arrowSelect, arrowConfirm } from '../ui/select.js';
 import type { SessionRow } from '../memory/ltm.js';
 import type { LongTermMemory } from '../memory/ltm.js';
 import type { Task } from '../core/task-state.js';
@@ -55,7 +55,7 @@ export async function pickSession(
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const options: Array<{ value: string; label: string; hint?: string }> = [
+    const options = [
       { value: '__new__', label: '+ New session' },
       ...sessions.map((s) => ({
         value: s.id,
@@ -63,13 +63,13 @@ export async function pickSession(
       })),
     ];
 
-    const choice = await p.select({
-      message: `Welcome back, \x1b[1m${userName}\x1b[0m — pick a session`,
+    const choice = await arrowSelect(
+      `Welcome back, \x1b[1m${userName}\x1b[0m — pick a session`,
       options,
-    });
+    );
 
-    if (p.isCancel(choice)) {
-      p.cancel('Cancelled.');
+    if (choice === null) {
+      process.stdout.write('Cancelled.\n');
       process.exit(0);
     }
 
@@ -78,16 +78,13 @@ export async function pickSession(
     }
 
     // Existing session selected — offer resume or delete
-    const action = await p.select({
-      message: 'What would you like to do?',
-      options: [
-        { value: 'resume', label: 'Resume this session' },
-        { value: 'delete', label: '\x1b[31mDelete this session\x1b[0m' },
-        { value: 'back', label: '← Back' },
-      ],
-    });
+    const action = await arrowSelect('What would you like to do?', [
+      { value: 'resume', label: 'Resume this session' },
+      { value: 'delete', label: '\x1b[31mDelete this session\x1b[0m' },
+      { value: 'back',   label: '← Back' },
+    ]);
 
-    if (p.isCancel(action) || action === 'back') {
+    if (action === null || action === 'back') {
       continue;
     }
 
@@ -95,14 +92,10 @@ export async function pickSession(
       const sessionId = choice as string;
       const task = ltm.getTaskState(sessionId);
 
-      // Show recap if there's an unfinished task
       if (task && task.state !== 'done' && task.state !== 'error') {
         showTaskRecap(task);
-        const continueTask = await p.confirm({
-          message: 'Continue this task?',
-          initialValue: true,
-        });
-        if (p.isCancel(continueTask) || !continueTask) {
+        const continueTask = await arrowConfirm('Continue this task?', true);
+        if (!continueTask) {
           return { type: 'resume', sessionId, task: null };
         }
       }
@@ -111,14 +104,14 @@ export async function pickSession(
     }
 
     if (action === 'delete') {
-      const confirmed = await p.confirm({
-        message: 'Delete this session and all its facts/summaries? This cannot be undone.',
-        initialValue: false,
-      });
-      if (!p.isCancel(confirmed) && confirmed) {
+      const confirmed = await arrowConfirm(
+        'Delete this session and all its facts/summaries? This cannot be undone.',
+        false,
+      );
+      if (confirmed) {
         ltm.deleteSession(choice as string);
         sessions = ltm.getSessionList(userName);
-        p.log.success('Session deleted.');
+        process.stdout.write('\x1b[32m✓ Session deleted.\x1b[0m\n');
       }
       // loop back to picker
     }

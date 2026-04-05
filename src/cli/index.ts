@@ -26,7 +26,7 @@ import { shellTool } from '../tools/builtin/shell.js';
 import { StreamRenderer } from '../ui/stream.js';
 import { runAgentTurn } from '../core/agent.js';
 import { pickSession } from './session-picker.js';
-import * as p from '@clack/prompts';
+import { arrowSelect } from '../ui/select.js';
 import { APIConnectionError, AuthenticationError, RateLimitError, APIError } from 'openai';
 
 function generateSessionId(): string {
@@ -164,26 +164,14 @@ async function main(): Promise<void> {
     terminal: true,
   });
 
-  // Reserve vertical space for clack: write N newlines to scroll the terminal,
-  // then move cursor back up so clack has empty room below it to render into.
-  function reserveSpace(lines: number): void {
-    const n = Math.max(1, lines);
-    process.stdout.write('\n'.repeat(n) + `\x1b[${n}A`);
-  }
-
-  const confirmFn = (toolLabel: string): Promise<boolean> => {
-    reserveSpace(8);
+  const confirmFn = async (toolLabel: string): Promise<boolean> => {
     rl.pause();
-    return p.select({
-      message: `Allow \x1b[1m${toolLabel}\x1b[0m?`,
-      options: [
-        { value: true,  label: '\x1b[32mYes, allow\x1b[0m' },
-        { value: false, label: '\x1b[2mNo, skip\x1b[0m' },
-      ],
-    }).then((choice) => {
-      rl.resume();
-      return p.isCancel(choice) ? false : (choice as boolean);
-    });
+    const choice = await arrowSelect(`Allow \x1b[1m${toolLabel}\x1b[0m?`, [
+      { value: true,  label: '\x1b[32mYes, allow\x1b[0m' },
+      { value: false, label: '\x1b[2mNo, skip\x1b[0m' },
+    ]);
+    rl.resume();
+    return choice ?? false;
   };
 
   const relSandbox = path.relative(process.cwd(), sandboxDir);
@@ -306,61 +294,43 @@ async function main(): Promise<void> {
 
   async function presentOptions(options: string[], recommended?: number): Promise<string | null> {
     const CUSTOM = '__custom__';
-    reserveSpace(options.length + 6);
     rl.pause();
-    try {
-      const choice = await p.select({
-        message: 'Choose an option:',
-        options: [
-          ...options.map((o, i) => ({
-            value: o,
-            label: o,
-            hint: i === recommended ? '★ recommended' : undefined,
-          })),
-          { value: CUSTOM, label: 'Type your own response' },
-        ],
-      });
-      if (p.isCancel(choice) || choice === CUSTOM) return null;
-      return choice as string;
-    } finally {
-      rl.resume();
-    }
+    const choice = await arrowSelect('Choose an option:', [
+      ...options.map((o, i) => ({
+        value: o,
+        label: o,
+        hint: i === recommended ? '★ recommended' : undefined,
+      })),
+      { value: CUSTOM, label: 'Type your own response' },
+    ]);
+    rl.resume();
+    if (choice === null || choice === CUSTOM) return null;
+    return choice;
   }
 
   async function promptExecutionChoice(context: 'start' | 'resume'): Promise<void> {
     const task = sm.taskMachine.task;
-    reserveSpace(6);
     rl.pause();
-    let choice: unknown;
-    try {
-      if (context === 'start') {
-        choice = await p.select({
-          message: 'Plan is ready. What would you like to do?',
-          options: [
-            { value: 'execute', label: '\x1b[32mStart execution\x1b[0m', hint: '★ recommended' },
-            { value: 'modify',  label: 'Modify the plan' },
-            { value: 'ask',    label: '\x1b[2mAsk a question\x1b[0m' },
-          ],
-        });
-      } else {
-        const stepInfo = task ? `step ${task.step + 1}/${task.total} — "${task.current}"` : 'in progress';
-        choice = await p.select({
-          message: `Resume execution (${stepInfo})?`,
-          options: [
-            { value: 'execute', label: '\x1b[32mContinue execution\x1b[0m', hint: '★ recommended' },
-            { value: 'ask',    label: 'Ask / discuss the plan' },
-            { value: 'modify', label: '\x1b[2mModify the plan\x1b[0m' },
-          ],
-        });
-      }
-    } finally {
-      rl.resume();
+    let choice: string | null;
+    if (context === 'start') {
+      choice = await arrowSelect('Plan is ready. What would you like to do?', [
+        { value: 'execute', label: '\x1b[32mStart execution\x1b[0m', hint: '★ recommended' },
+        { value: 'modify',  label: 'Modify the plan' },
+        { value: 'ask',     label: '\x1b[2mAsk a question\x1b[0m' },
+      ]);
+    } else {
+      const stepInfo = task ? `step ${task.step + 1}/${task.total} — "${task.current}"` : 'in progress';
+      choice = await arrowSelect(`Resume execution (${stepInfo})?`, [
+        { value: 'execute', label: '\x1b[32mContinue execution\x1b[0m', hint: '★ recommended' },
+        { value: 'ask',     label: 'Ask / discuss the plan' },
+        { value: 'modify',  label: '\x1b[2mModify the plan\x1b[0m' },
+      ]);
     }
-    if (p.isCancel(choice) || choice === 'ask' || choice === 'modify') {
+    rl.resume();
+    if (choice === null || choice === 'ask' || choice === 'modify') {
       askUser();
       return;
     }
-    // 'execute'
     const msg = context === 'start'
       ? '[SYSTEM] The user approved the plan. Begin execution now. Start with step 1.'
       : '[SYSTEM] The user wants to continue execution. Resume from the current step exactly where you left off.';
