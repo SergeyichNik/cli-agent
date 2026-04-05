@@ -2,9 +2,9 @@ import type { Message } from '../providers/base.js';
 import type { WorkingMemory } from '../memory/wm.js';
 import type { LongTermMemory } from '../memory/ltm.js';
 import type { UserConfig } from '../user/profile.js';
-import type { TaskState } from '../core/task-state.js';
+import type { TaskState, Task } from '../core/task-state.js';
 
-function buildStateBlock(state: TaskState): string {
+function buildStateBlock(state: TaskState, task: Task | null): string {
   switch (state) {
     case 'planning':
       return `
@@ -29,13 +29,32 @@ When plan is ready:
 
 `;
 
-    case 'execution':
+    case 'execution': {
+      let progressBlock = '';
+      if (task && task.total > 0) {
+        const doneLines = task.done.map((s, i) => `  ✓ ${i + 1}. ${s}`).join('\n');
+        const remaining = task.plan.slice(task.step);
+        const remainingLines = remaining.map((s, i) => `  ○ ${task.step + i + 1}. ${s}`).join('\n');
+        progressBlock = `
+## Task Progress
+Current step: ${task.step + 1} / ${task.total} — "${task.current}"
+${task.done.length > 0 ? `Completed:\n${doneLines}` : 'Completed: (none yet)'}
+Remaining (including current):
+${remainingLines}
+`;
+      }
       return `
 ## Current State: EXECUTION
-You are implementing the plan step by step. Execute the current step fully before moving on.
-When a step is complete, emit step_done:true in your metadata.
+${progressBlock}
+STRICT RULES:
+- Execute ONLY the current step listed above. Do not jump ahead.
+- When the current step is FULLY implemented, emit: {"intent":"OTHER","step_done":true}
+- Do NOT emit step_done:true until the step is completely done and verified
+- After step_done, immediately proceed to the next step without waiting for user input
+- When ALL steps are done (step === total), emit: {"intent":"CONFIRM"} to move to validation
 
-`;
+`;}
+
     case 'validation':
       return `
 ## Current State: VALIDATION
@@ -60,6 +79,7 @@ export function buildSystemPrompt(
   ltm: LongTermMemory,
   sessionId: string,
   taskState: TaskState = 'planning',
+  task: Task | null = null,
 ): string {
   const facts = ltm.getFactsBySession(sessionId);
   const factLines = facts.map((f) => `- ${f.key}: ${f.value}`).join('\n');
@@ -68,7 +88,7 @@ export function buildSystemPrompt(
   const allInvariants = [...(config.invariants ?? []), ...sessionInvariants];
   const invariantLines = allInvariants.map((inv) => `- ${inv}`).join('\n');
 
-  const stateBlock = buildStateBlock(taskState);
+  const stateBlock = buildStateBlock(taskState, task);
 
   return `You are a CLI code assistant agent helping ${config.userName ?? 'the user'}.
 
@@ -133,6 +153,8 @@ export function buildContext(
   systemPrompt: string,
   wm: WorkingMemory,
   ltm: LongTermMemory,
+  task: Task | null = null,
+  taskState: TaskState = 'planning',
 ): Message[] {
   const relevantSummaries = ltm.searchRelevant(userMessage);
   const summaryNote =
@@ -143,8 +165,27 @@ export function buildContext(
   const messages: Message[] = [
     { role: 'system', content: systemPrompt + summaryNote },
     ...wm.getWindow(),
-    { role: 'user', content: userMessage },
   ];
+
+  // Inject step reminder as the last message before user input so LLM can't ignore it
+  if (taskState === 'execution' && task && task.current) {
+    const done = task.done.map((s, i) => `  ✓ ${i + 1}. ${s}`).join('\n');
+    const remaining = task.plan.slice(task.step + 1).map((s, i) => `  ○ ${task.step + i + 2}. ${s}`).join('\n');
+    messages.push({
+      role: 'user',
+      content: [
+        `[STEP INSTRUCTION] You are on step ${task.step + 1} of ${task.total}.`,
+        `Your ONLY job right now: "${task.current}"`,
+        `Do ONLY this step. Do NOT implement anything beyond it.`,
+        done ? `Already done:\n${done}` : null,
+        remaining ? `Still ahead (do NOT touch yet):\n${remaining}` : null,
+        `When this step is fully complete, emit: {"intent":"OTHER","step_done":true}`,
+      ].filter(Boolean).join('\n'),
+    });
+    messages.push({ role: 'assistant', content: 'Understood. I will execute only this step.' });
+  }
+
+  messages.push({ role: 'user', content: userMessage });
 
   return messages;
 }

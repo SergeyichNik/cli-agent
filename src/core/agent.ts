@@ -28,13 +28,14 @@ export interface AgentDeps {
 export interface AgentTurnResult {
   options?: string[];
   recommended?: number;
+  autoContinue?: boolean;
 }
 
 export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promise<AgentTurnResult> {
   const { provider, wm, ltm, sm, tools, config, renderer, sessionId } = deps;
 
-  const systemPrompt = buildSystemPrompt(config, ltm, sessionId, sm.taskMachine.state);
-  const messages = buildContext(userMessage, systemPrompt, wm, ltm);
+  const systemPrompt = buildSystemPrompt(config, ltm, sessionId, sm.taskMachine.state, sm.taskMachine.task);
+  const messages = buildContext(userMessage, systemPrompt, wm, ltm, sm.taskMachine.task, sm.taskMachine.state);
 
   // Add user message to WM
   wm.add({ role: 'user', content: userMessage });
@@ -225,14 +226,14 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
   const hitDepthLimit = depth >= maxDepth;
 
   if (hitDepthLimit) {
-    renderer.showInfo(`[Max tool depth (${maxDepth}) reached — asking for summary]`);
+    renderer.showInfo(`[Max tool depth (${maxDepth}) reached — continuing in next turn]`);
   }
 
   if (needsFinalResponse || hitDepthLimit) {
     messages.push({
       role: 'user',
       content: hitDepthLimit
-        ? 'You have reached the tool call limit. Summarize what you accomplished and what still needs to be done.'
+        ? '[SYSTEM] Tool call limit reached for this turn. Briefly summarize what you completed in this turn and what still needs to be done. Do NOT re-explain the full plan. Be concise.'
         : 'Summarize the results of your actions for the user.',
     });
     renderer.startSpinner();
@@ -343,7 +344,8 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
   // Summarize if WM is full
   await summarizeIfNeeded(provider, wm, ltm, sessionId);
 
-  return { options: pendingOptions, recommended: pendingRecommended };
+  const autoContinue = hitDepthLimit && sm.taskMachine.state === 'execution';
+  return { options: pendingOptions, recommended: pendingRecommended, autoContinue };
 }
 
 export function createReadlineInput(

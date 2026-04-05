@@ -165,12 +165,16 @@ async function main(): Promise<void> {
   });
 
   const confirmFn = (toolLabel: string): Promise<boolean> => {
+    // Push cursor down so clack has room to render without hitting the terminal bottom
+    const rows = process.stdout.rows ?? 24;
+    const clearLines = Math.min(8, Math.floor(rows / 3));
+    process.stdout.write('\n'.repeat(clearLines));
     rl.pause();
     return p.select({
       message: `Allow \x1b[1m${toolLabel}\x1b[0m?`,
       options: [
-        { value: false, label: '\x1b[2mNo, skip\x1b[0m' },
         { value: true,  label: '\x1b[32mYes, allow\x1b[0m' },
+        { value: false, label: '\x1b[2mNo, skip\x1b[0m' },
       ],
     }).then((choice) => {
       rl.resume();
@@ -297,26 +301,28 @@ async function main(): Promise<void> {
   };
 
   async function presentOptions(options: string[], recommended?: number): Promise<string | null> {
-    process.stdout.write('\n\x1b[1mChoose an option:\x1b[0m\n');
-    options.forEach((o, i) => {
-      const hint = i === recommended ? '  \x1b[2m★ recommended\x1b[0m' : '';
-      process.stdout.write(`  \x1b[1m${i + 1}.\x1b[0m ${o}${hint}\n`);
-    });
-    process.stdout.write(`  \x1b[1m${options.length + 1}.\x1b[0m \x1b[2mType your own response\x1b[0m\n\n`);
-
-    return new Promise((resolve) => {
-      rl.question(
-        `\x1b[2mEnter number [1–${options.length + 1}] or press Enter to type manually:\x1b[0m `,
-        (ans) => {
-          const n = parseInt(ans.trim(), 10);
-          if (!ans.trim() || isNaN(n) || n < 1 || n > options.length) {
-            resolve(null);
-            return;
-          }
-          resolve(options[n - 1] ?? null);
-        },
-      );
-    });
+    const CUSTOM = '__custom__';
+    const rows = process.stdout.rows ?? 24;
+    const clearLines = Math.min(options.length + 6, Math.floor(rows / 3));
+    process.stdout.write('\n'.repeat(clearLines));
+    rl.pause();
+    try {
+      const choice = await p.select({
+        message: 'Choose an option:',
+        options: [
+          ...options.map((o, i) => ({
+            value: o,
+            label: o,
+            hint: i === recommended ? '★ recommended' : undefined,
+          })),
+          { value: CUSTOM, label: 'Type your own response' },
+        ],
+      });
+      if (p.isCancel(choice) || choice === CUSTOM) return null;
+      return choice as string;
+    } finally {
+      rl.resume();
+    }
   }
 
   async function handleTurn(message: string): Promise<void> {
@@ -350,6 +356,11 @@ async function main(): Promise<void> {
     }
 
     console.log();
+
+    if (result?.autoContinue) {
+      await handleTurn('[SYSTEM] Continue executing the next step of the plan. Pick up exactly where you left off.');
+      return;
+    }
 
     if (result?.options?.length) {
       const picked = await presentOptions(result.options, result.recommended);
