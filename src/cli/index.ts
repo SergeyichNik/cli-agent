@@ -164,11 +164,15 @@ async function main(): Promise<void> {
     terminal: true,
   });
 
+  // Reserve vertical space for clack: write N newlines to scroll the terminal,
+  // then move cursor back up so clack has empty room below it to render into.
+  function reserveSpace(lines: number): void {
+    const n = Math.max(1, lines);
+    process.stdout.write('\n'.repeat(n) + `\x1b[${n}A`);
+  }
+
   const confirmFn = (toolLabel: string): Promise<boolean> => {
-    // Push cursor down so clack has room to render without hitting the terminal bottom
-    const rows = process.stdout.rows ?? 24;
-    const clearLines = Math.min(8, Math.floor(rows / 3));
-    process.stdout.write('\n'.repeat(clearLines));
+    reserveSpace(8);
     rl.pause();
     return p.select({
       message: `Allow \x1b[1m${toolLabel}\x1b[0m?`,
@@ -302,9 +306,7 @@ async function main(): Promise<void> {
 
   async function presentOptions(options: string[], recommended?: number): Promise<string | null> {
     const CUSTOM = '__custom__';
-    const rows = process.stdout.rows ?? 24;
-    const clearLines = Math.min(options.length + 6, Math.floor(rows / 3));
-    process.stdout.write('\n'.repeat(clearLines));
+    reserveSpace(options.length + 6);
     rl.pause();
     try {
       const choice = await p.select({
@@ -327,8 +329,7 @@ async function main(): Promise<void> {
 
   async function promptExecutionChoice(context: 'start' | 'resume'): Promise<void> {
     const task = sm.taskMachine.task;
-    const rows = process.stdout.rows ?? 24;
-    process.stdout.write('\n'.repeat(Math.min(6, Math.floor(rows / 4))));
+    reserveSpace(6);
     rl.pause();
     let choice: unknown;
     try {
