@@ -342,64 +342,20 @@ async function main(): Promise<void> {
   }
 
   async function promptStepChoice(): Promise<void> {
-    rl.pause();
-    bottomBar.drawStatus();
-    const choice = await arrowSelect('Step complete. What next?', [
-      { value: 'continue', label: '\x1b[32mContinue to next step\x1b[0m', hint: '★ recommended' },
-      { value: 'modify',   label: 'Modify the plan' },
-      { value: 'ask',      label: '\x1b[2mAsk a question\x1b[0m' },
-    ], 0, 1);
-    rl.resume();
-    if (choice === 'continue') {
-      await handleTurn('[SYSTEM] Continue executing the next step of the plan. Pick up exactly where you left off.');
-      return;
-    }
-    askUser();
+    await handleTurn('[SYSTEM] Continue executing the next step of the plan. Pick up exactly where you left off.');
   }
 
   async function promptValidationChoice(): Promise<void> {
-    rl.pause();
-    bottomBar.drawStatus();
-    const choice = await arrowSelect('All steps complete. Run validation?', [
-      { value: 'run',  label: '\x1b[36mRun validation\x1b[0m', hint: '★ recommended' },
-      { value: 'skip', label: '\x1b[2mSkip, mark as done\x1b[0m' },
-    ], 0, 1);
-    rl.resume();
-
-    if (choice === 'run') {
-      sm.taskMachine.transition('CONFIRM'); // execution → validation
-      renderer.showStateChange('execution', 'validation', 'CONFIRM');
-      await handleTurn('[SYSTEM] All steps are complete. Begin validation now. Review what was implemented against the plan.');
-    } else if (choice === 'skip') {
-      sm.taskMachine.transition('CONFIRM'); // execution → validation
-      sm.taskMachine.transition('CONFIRM'); // validation → done
-      renderer.showStateChange('execution', 'done', 'CONFIRM');
-      ltm.endSession(sessionId, sm.taskMachine.task?.task ?? null);
-      askUser();
-    } else {
-      askUser();
-    }
+    sm.taskMachine.transition('CONFIRM'); // execution → validation
+    renderer.showStateChange('execution', 'validation', 'CONFIRM');
+    await handleTurn('[SYSTEM] All steps are complete. Begin validation now. Review what was implemented against the plan.');
   }
 
   async function promptDoneChoice(): Promise<void> {
-    rl.pause();
-    bottomBar.drawStatus();
-    const choice = await arrowSelect('Validation complete. Mark as done?', [
-      { value: 'done', label: '\x1b[32mMark as done\x1b[0m', hint: '★ recommended' },
-      { value: 'back', label: 'Back to execution' },
-    ], 0, 1);
-    rl.resume();
-
-    if (choice === 'done') {
-      sm.taskMachine.transition('CONFIRM'); // validation → done
-      renderer.showStateChange('validation', 'done', 'CONFIRM');
-      ltm.endSession(sessionId, sm.taskMachine.task?.task ?? null);
-      askUser();
-    } else {
-      sm.taskMachine.transition('OTHER'); // validation → execution
-      renderer.showStateChange('validation', 'execution', 'OTHER');
-      await handleTurn('[SYSTEM] User wants to go back to execution to fix issues. Resume execution from the current step.');
-    }
+    sm.taskMachine.transition('CONFIRM'); // validation → done
+    renderer.showStateChange('validation', 'done', 'CONFIRM');
+    ltm.endSession(sessionId, sm.taskMachine.task?.task ?? null);
+    askUser();
   }
 
   async function promptExecutionChoice(context: 'start' | 'resume'): Promise<void> {
@@ -469,11 +425,15 @@ async function main(): Promise<void> {
     }
 
     if (result?.stepCompleted || result?.autoContinue) {
-      const task = sm.taskMachine.task;
-      if (task && task.step >= task.total) {
-        await promptValidationChoice();
+      if (result?.stats?.taskState === 'validation') {
+        await handleTurn('[SYSTEM] Continue validation. Pick up where you left off.');
       } else {
-        await promptStepChoice();
+        const task = sm.taskMachine.task;
+        if (task && task.step >= task.total) {
+          await promptValidationChoice();
+        } else {
+          await promptStepChoice();
+        }
       }
       return;
     }

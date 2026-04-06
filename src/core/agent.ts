@@ -5,6 +5,7 @@ import type { SessionMemory } from '../memory/sm.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import type { UserConfig } from '../user/profile.js';
 import type { StreamRenderer } from '../ui/stream.js';
+import type { BottomBarStats } from '../ui/bottom-bar.js';
 import { parseMetadataLine, stripMetadataLine } from './task-state.js';
 import { checkToolInvariants, InvariantViolationError } from './invariants.js';
 import { buildSystemPrompt, buildContext } from '../context/optimizer.js';
@@ -30,12 +31,15 @@ export interface AgentTurnResult {
   recommended?: number;
   autoContinue?: boolean;
   startedExecution?: boolean;
+  stepCompleted?: boolean;
+  validationComplete?: boolean;
+  stats: BottomBarStats;
 }
 
 export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promise<AgentTurnResult> {
   const { provider, wm, ltm, sm, tools, config, renderer, sessionId } = deps;
 
-  const systemPrompt = buildSystemPrompt(config, ltm, sessionId, sm.taskMachine.state, sm.taskMachine.task);
+  const systemPrompt = buildSystemPrompt(config, ltm, sessionId, sm.taskMachine.state, sm.taskMachine.task, tools.sandboxDir);
   const messages = buildContext(userMessage, systemPrompt, wm, ltm, sm.taskMachine.task, sm.taskMachine.state);
 
   // Add user message to WM
@@ -137,7 +141,26 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
       try {
         params = JSON.parse(tc.arguments) as Record<string, unknown>;
       } catch {
-        params = {};
+        renderer.showError('Tool arguments JSON is invalid (likely truncated — content too large).');
+        sm.consecutiveToolErrors++;
+        toolResultMessages.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          content: 'Error: Tool arguments could not be parsed — the content is likely too large and was truncated. Split the content into multiple smaller files or smaller write_file calls (max ~200 lines per file).',
+        });
+        continue;
+      }
+
+      // Guard against oversized content before calling MCP
+      if (typeof params.content === 'string' && params.content.length > 20_000) {
+        renderer.showError(`Content too large (${params.content.length} chars) — split into smaller files.`);
+        sm.consecutiveToolErrors++;
+        toolResultMessages.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          content: `Error: File content is too large (${params.content.length} chars). Split into multiple focused files of max ~200 lines each.`,
+        });
+        continue;
       }
 
       // Invariant check
@@ -254,7 +277,32 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
   let pendingOptions: string[] | undefined;
   let pendingRecommended: number | undefined;
   let startedExecution = false;
-  const meta = parseMetadataLine(fullResponseText);
+  let stepCompleted = false;
+  let validationComplete = false;
+  let meta = parseMetadataLine(fullResponseText);
+
+  // Enforce: in planning state, QUESTION intent must include options
+  if (meta && sm.taskMachine.state === 'planning' && meta.intent === 'QUESTION' && !meta.options) {
+    messages.push({ role: 'assistant', content: fullResponseText });
+    messages.push({
+      role: 'user',
+      content: '[SYSTEM] Your question did not include answer options. In planning state, EVERY question MUST use the format {"intent":"QUESTION","options":["A","B","C"],"recommended":0} with 3–4 concrete, case-specific options. Re-ask your question now with proper options.',
+    });
+    fullResponseText = '';
+    renderer.startSpinner();
+    for await (const chunk of provider.stream(messages, { temperature: 0.7 })) {
+      if (chunk.type === 'text') {
+        renderer.onToken(chunk.text);
+        fullResponseText += chunk.text;
+      } else if (chunk.type === 'usage') {
+        totalInputTokens += chunk.input_tokens;
+        totalOutputTokens += chunk.output_tokens;
+      }
+    }
+    renderer.finalize();
+    meta = parseMetadataLine(fullResponseText) ?? meta;
+  }
+
   if (meta) {
     const prevState = sm.taskMachine.state;
 
@@ -290,15 +338,21 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
       }
       renderer.finalize();
     } else {
-      // Transition state based on intent
-      sm.taskMachine.transition(meta.intent);
-      if (prevState === 'planning' && sm.taskMachine.state === 'execution') {
-        startedExecution = true;
+      // Intercept CONFIRM from validation — let CLI prompt the user instead of auto-transitioning
+      if (sm.taskMachine.state === 'validation' && meta.intent === 'CONFIRM') {
+        validationComplete = true;
+      } else {
+        // Transition state based on intent
+        sm.taskMachine.transition(meta.intent);
+        if (prevState === 'planning' && sm.taskMachine.state === 'execution') {
+          startedExecution = true;
+        }
       }
     }
 
     // Mark step complete after state transition
     if (meta.step_done) {
+      if (sm.taskMachine.state === 'execution') stepCompleted = true;
       sm.taskMachine.completeStep();
     }
 
@@ -320,10 +374,23 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
     }
   }
 
-  renderer.showStats(totalInputTokens, totalOutputTokens);
+  // Auto-detect step completion: agent finished in execution state but didn't emit step_done
+  // Only when depth limit wasn't hit (agent truly finished its work for this turn)
+  if (!stepCompleted && !hitDepthLimit && !startedExecution && sm.taskMachine.state === 'execution' && fullResponseText.trim() && !pendingOptions) {
+    stepCompleted = true;
+    sm.taskMachine.completeStep();
+    if (sm.taskMachine.task) {
+      ltm.saveTaskState(sessionId, sm.taskMachine.task);
+    }
+  }
 
-  // Show task progress bar if task is active
-  if (sm.taskMachine.task && sm.taskMachine.state !== 'error') {
+  // Auto-detect validation completion: agent finished in validation state but didn't emit CONFIRM
+  if (!validationComplete && !hitDepthLimit && sm.taskMachine.state === 'validation' && fullResponseText.trim() && !pendingOptions) {
+    validationComplete = true;
+  }
+
+  // Show task progress bar only when there are steps to display (bottom bar covers state-only case)
+  if (sm.taskMachine.task && sm.taskMachine.state !== 'error' && sm.taskMachine.task.total > 0) {
     renderer.showTaskProgress(sm.taskMachine.task);
   }
 
@@ -336,12 +403,11 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
     ltm.endSession(sessionId, sm.taskMachine.task?.task ?? null);
   }
 
-  // Context window percentage — update in DB and show status bar
+  // Context window percentage — update in DB
   const ctxPct = config.contextWindowTokens > 0
     ? Math.min(100, Math.round((wm.tokenCount() / config.contextWindowTokens) * 100))
     : 0;
   ltm.updateSessionCtxPct(sessionId, ctxPct);
-  renderer.showContextBar(wm.tokenCount(), config.contextWindowTokens);
 
   // Background: extract sticky facts (session-scoped)
   extractAndSaveFactsAsync(provider, [...messages], ltm, sessionId);
@@ -349,8 +415,17 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
   // Summarize if WM is full
   await summarizeIfNeeded(provider, wm, ltm, sessionId);
 
-  const autoContinue = hitDepthLimit && sm.taskMachine.state === 'execution';
-  return { options: pendingOptions, recommended: pendingRecommended, autoContinue, startedExecution };
+  const autoContinue = hitDepthLimit && (sm.taskMachine.state === 'execution' || sm.taskMachine.state === 'validation');
+  const stats: BottomBarStats = {
+    inputTokens:  totalInputTokens,
+    outputTokens: totalOutputTokens,
+    ctxUsed:      wm.tokenCount(),
+    ctxMax:       config.contextWindowTokens,
+    taskState:    sm.taskMachine.state,
+    step:         sm.taskMachine.task?.step  ?? 0,
+    total:        sm.taskMachine.task?.total ?? 0,
+  };
+  return { options: pendingOptions, recommended: pendingRecommended, autoContinue, startedExecution, stepCompleted, validationComplete, stats };
 }
 
 export function createReadlineInput(

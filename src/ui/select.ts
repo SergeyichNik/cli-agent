@@ -10,14 +10,19 @@ export async function arrowSelect<T>(
   message: string,
   options: SelectOption<T>[],
   initialIndex = 0,
+  reserveAbove = 0,
+  collapse = true,
 ): Promise<T | null> {
   return new Promise((resolve) => {
     let idx = Math.max(0, Math.min(initialIndex, options.length - 1));
     const height = options.length + 1; // message line + option lines
     let rendered = false;
 
-    // Reserve vertical space so the menu always has room below the cursor.
-    process.stdout.write('\n'.repeat(height) + `\x1b[${height}A`);
+    // Reserve vertical space. reserveAbove accounts for lines already printed above
+    // (e.g. a status line from bottomBar.drawStatus()) so cursor-up doesn't overshoot.
+    const totalReserve = height + reserveAbove;
+    process.stdout.write('\n'.repeat(totalReserve) + `\x1b[${totalReserve}A`);
+    if (reserveAbove > 0) process.stdout.write(`\x1b[${reserveAbove}B`);
 
     function render() {
       if (rendered) process.stdout.write(`\x1b[${height}A`);
@@ -49,6 +54,21 @@ export async function arrowSelect<T>(
 
     render();
 
+    function collapseMenu() {
+      // Erase the menu and replace with a single summary line
+      process.stdout.write(`\x1b[${height}A`); // move to menu start
+      // Strip ANSI codes from label for cleaner summary
+      const rawLabel = options[idx].label.replace(/\x1b\[[0-9;]*m/g, '');
+      process.stdout.write(`\x1b[2K\r\x1b[2m◇\x1b[0m ${message} \x1b[2m→\x1b[0m ${rawLabel}\n`);
+      // Erase remaining option lines
+      for (let i = 0; i < options.length; i++) {
+        process.stdout.write('\x1b[2K\r');
+        if (i < options.length - 1) process.stdout.write('\n');
+      }
+      // Move cursor back to right after summary line
+      if (options.length > 1) process.stdout.write(`\x1b[${options.length - 1}A`);
+    }
+
     function cleanup() {
       process.stdin.removeListener('keypress', onKeypress);
       try { stdin.setRawMode(wasRaw); } catch { /* ignore */ }
@@ -65,6 +85,7 @@ export async function arrowSelect<T>(
         idx = (idx + 1) % options.length;
         render();
       } else if (key.name === 'return') {
+        if (collapse) collapseMenu();
         cleanup();
         resolve(options[idx].value);
       } else if (key.name === 'escape' || (key.ctrl && key.name === 'c')) {
@@ -81,6 +102,7 @@ export async function arrowSelect<T>(
 export async function arrowConfirm(
   message: string,
   initialValue = true,
+  reserveAbove = 0,
 ): Promise<boolean | null> {
   return arrowSelect(
     message,
@@ -89,5 +111,6 @@ export async function arrowConfirm(
       { value: false, label: 'No' },
     ],
     initialValue ? 0 : 1,
+    reserveAbove,
   );
 }

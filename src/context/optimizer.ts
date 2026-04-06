@@ -80,6 +80,7 @@ export function buildSystemPrompt(
   sessionId: string,
   taskState: TaskState = 'planning',
   task: Task | null = null,
+  sandboxDir = '',
 ): string {
   const facts = ltm.getFactsBySession(sessionId);
   const factLines = facts.map((f) => `- ${f.key}: ${f.value}`).join('\n');
@@ -89,6 +90,9 @@ export function buildSystemPrompt(
   const invariantLines = allInvariants.map((inv) => `- ${inv}`).join('\n');
 
   const stateBlock = buildStateBlock(taskState, task);
+  const cwdBlock = sandboxDir
+    ? `\n## Working Directory\nYour current working directory for ALL file and shell operations is: ${sandboxDir}\nAll paths must be relative to this directory. Do not assume project-root paths exist here.\n`
+    : '';
 
   return `You are a CLI code assistant agent helping ${config.userName ?? 'the user'}.
 
@@ -106,6 +110,7 @@ ${factLines || '(none yet)'}
 - Do not hallucinate file contents; use tools to read files
 ${invariantLines}
 
+${cwdBlock}
 ## State Machine — NON-NEGOTIABLE
 The task follows a strict state machine: planning → execution → validation → done.
 You MUST NOT skip or rush through states, even if the user explicitly asks you to.
