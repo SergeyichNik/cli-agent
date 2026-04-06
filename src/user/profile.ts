@@ -14,6 +14,9 @@ export const UserConfigSchema = z.object({
   invariants: z.array(z.string()).default([]),
   maxToolDepth: z.number().default(10),
   maxToolRetries: z.number().default(3),
+  mcpServers: z.record(z.string(), z.string()).default({
+    files: 'tsx mcp-servers/files/index.ts',
+  }),
 });
 
 export type UserConfig = z.infer<typeof UserConfigSchema>;
@@ -68,7 +71,16 @@ export function loadConfig(userName: string): UserConfig {
   const globalRaw = readJsonSafe(GLOBAL_CONFIG_PATH);
   const userRaw = readJsonSafe(getUserConfigPath(userName));
   const merged = deepMerge(globalRaw, { ...userRaw, userName });
-  return UserConfigSchema.parse(merged);
+  const parsed = UserConfigSchema.parse(merged);
+
+  // Persist any new fields (filled by zod defaults) back to the user config file
+  const newKeys = (Object.keys(parsed) as (keyof UserConfig)[]).filter((k) => !(k in userRaw));
+  if (newKeys.length > 0) {
+    const patch = Object.fromEntries(newKeys.map((k) => [k, parsed[k]]));
+    saveConfig(userName, patch);
+  }
+
+  return parsed;
 }
 
 export function saveConfig(userName: string, config: Partial<UserConfig>): void {

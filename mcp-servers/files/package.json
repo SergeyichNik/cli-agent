@@ -1,0 +1,6 @@
+{
+  "name": "mcp-server-files",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "MCP file CRUD server for cli-agent"
+}

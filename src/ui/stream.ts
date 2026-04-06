@@ -96,18 +96,6 @@ export class StreamRenderer {
       .trimEnd();
   }
 
-  // --- Stats bar ---
-
-  showStats(inputTokens: number, outputTokens: number): void {
-    const elapsed = ((Date.now() - this.startTime) / 1000).toFixed(1);
-    const stats = [
-      `\x1b[2m↑\x1b[0m ${inputTokens.toLocaleString()}`,
-      `\x1b[2m↓\x1b[0m ${outputTokens.toLocaleString()}`,
-      `\x1b[2m${elapsed}s\x1b[0m`,
-    ].join('  ');
-    process.stdout.write(`\x1b[2m─\x1b[0m ${stats}\n`);
-  }
-
   showStateChange(prevState: string, nextState: string, intent: string): void {
     process.stdout.write(
       `\x1b[2m◈ ${intent}  ${prevState} → ${nextState}\x1b[0m\n`,
@@ -131,7 +119,14 @@ export class StreamRenderer {
     try {
       prettyArgs = JSON.stringify(JSON.parse(args), null, 2);
     } catch { /* use raw */ }
-    process.stdout.write(`\n\x1b[36m⚙ ${toolName}\x1b[0m\n\x1b[2m${prettyArgs}\x1b[0m\n`);
+    const displayName = this.formatToolName(toolName);
+    process.stdout.write(`\n\x1b[36m⚙ ${displayName}\x1b[0m\n\x1b[2m${prettyArgs}\x1b[0m\n`);
+  }
+
+  private formatToolName(name: string): string {
+    const match = name.match(/^(\w+)__(.+)$/);
+    if (match) return `[MCP: ${match[1]}] ${match[2]}`;
+    return name;
   }
 
   showToolResult(result: string, truncate = 500): void {
@@ -197,16 +192,5 @@ export class StreamRenderer {
     }
   }
 
-  showContextBar(usedTokens: number, maxTokens: number): void {
-    const pct = maxTokens > 0 ? Math.min(100, Math.round((usedTokens / maxTokens) * 100)) : 0;
-    const filled = Math.round((pct / 100) * 20);
-    const bar = '█'.repeat(filled) + '░'.repeat(20 - filled);
 
-    // green < 70%, yellow 70–89%, red ≥ 90%
-    const color = pct >= 90 ? '\x1b[31m' : pct >= 70 ? '\x1b[33m' : '\x1b[32m';
-
-    process.stdout.write(
-      `\x1b[2m ctx:\x1b[0m ${color}${bar}\x1b[0m \x1b[1m${pct}%\x1b[0m  \x1b[2m(${usedTokens.toLocaleString()}/${maxTokens.toLocaleString()} tok)\x1b[0m\n`,
-    );
-  }
 }

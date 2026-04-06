@@ -19,11 +19,10 @@ import { WorkingMemory } from '../memory/wm.js';
 import { LongTermMemory } from '../memory/ltm.js';
 import { SessionMemory } from '../memory/sm.js';
 import { ToolRegistry } from '../tools/registry.js';
-import { readFileTool } from '../tools/builtin/read-file.js';
-import { writeFileTool } from '../tools/builtin/write-file.js';
-import { listDirTool } from '../tools/builtin/list-dir.js';
 import { shellTool } from '../tools/builtin/shell.js';
+import { McpClient } from '../mcp/client.js';
 import { StreamRenderer } from '../ui/stream.js';
+import { BottomBar } from '../ui/bottom-bar.js';
 import { runAgentTurn } from '../core/agent.js';
 import { pickSession } from './session-picker.js';
 import { arrowSelect } from '../ui/select.js';
@@ -46,22 +45,16 @@ async function main(): Promise<void> {
   }
   let config = loadConfig(args.user);
 
-  // Apply .env overrides (lower priority than CLI flags)
-  const envProvider = process.env.LLM_PROVIDER as 'deepseek' | 'lmstudio' | undefined;
-  const envModel = process.env.LLM_MODEL;
+  // .env: secrets and infrastructure only (not user preferences)
   const envApiKey = process.env.DEEPSEEK_API_KEY;
   const envLmStudioUrl = process.env.LMSTUDIO_BASE_URL;
   const envDeepSeekUrl = process.env.DEEPSEEK_BASE_URL;
-  if (envProvider) config = { ...config, provider: envProvider };
-  if (envModel) config = { ...config, model: envModel };
-  if (envApiKey) config = { ...config, apiKey: envApiKey };
+  // API key from env acts as fallback if not set in config (e.g. CI/CD)
+  if (envApiKey && !config.apiKey) config = { ...config, apiKey: envApiKey };
 
-  // Apply CLI overrides (highest priority)
+  // CLI flags: one-off overrides (highest priority)
   if (args.provider) config = { ...config, provider: args.provider };
   if (args.model) config = { ...config, model: args.model };
-
-  // Final fallback if nothing set provider
-  if (!config.provider) config = { ...config, provider: 'lmstudio' };
 
   // Create provider
   const lmStudioUrl = envLmStudioUrl ?? 'http://localhost:1234/v1';
@@ -132,10 +125,12 @@ async function main(): Promise<void> {
   // Register tools
   const tools = new ToolRegistry();
   tools.sandboxDir = sandboxDir;
-  tools.register(readFileTool);
-  tools.register(writeFileTool);
-  tools.register(listDirTool);
   tools.register(shellTool);
+
+  // Start MCP servers and register their tools
+  const mcpClient = new McpClient();
+  const mcpTools = await mcpClient.initialize(config, sandboxDir);
+  for (const t of mcpTools) tools.register(t);
 
   // Load plugins
   try {
@@ -146,7 +141,7 @@ async function main(): Promise<void> {
     );
     for (const file of pluginFiles) {
       const mod = await import(path.join(pluginsDir, file)) as { default?: unknown; tools?: unknown[] };
-      const pluginTools = (mod.default ?? mod.tools) as Array<typeof readFileTool> | undefined;
+      const pluginTools = (mod.default ?? mod.tools) as import('../tools/base.js').Tool[] | undefined;
       if (Array.isArray(pluginTools)) {
         for (const t of pluginTools) tools.register(t);
       }
@@ -156,6 +151,7 @@ async function main(): Promise<void> {
   }
 
   const renderer = new StreamRenderer();
+  const bottomBar = new BottomBar();
 
   // Set up readline for multi-line input
   const rl = readline.createInterface({
@@ -181,7 +177,8 @@ async function main(): Promise<void> {
 
   // Input loop
   const askUser = (): void => {
-    rl.question('\x1b[1mYou:\x1b[0m ', async (input) => {
+    bottomBar.draw();
+    rl.question('> ', async (input) => {
       const message = input.trim();
       if (!message) {
         askUser();
@@ -192,6 +189,7 @@ async function main(): Promise<void> {
         console.log('Goodbye!');
         ltm.close();
         rl.close();
+        await mcpClient.shutdown();
         process.exit(0);
       }
 
@@ -271,6 +269,38 @@ async function main(): Promise<void> {
         return;
       }
 
+      if (message === '/mcp' || message.startsWith('/mcp ')) {
+        const filter = message.startsWith('/mcp ') ? message.slice(5).trim() : null;
+        const mcpTools = tools.list().filter((t) => t.name.includes('__'));
+
+        // Group by server name
+        const byServer = new Map<string, typeof mcpTools>();
+        for (const t of mcpTools) {
+          const [serverName] = t.name.split('__');
+          if (filter && serverName !== filter) continue;
+          if (!byServer.has(serverName)) byServer.set(serverName, []);
+          byServer.get(serverName)!.push(t);
+        }
+
+        if (byServer.size === 0) {
+          const hint = filter ? ` "${filter}"` : '';
+          console.log(`No MCP tools found${hint}. Configured servers: ${Object.keys(config.mcpServers ?? {}).join(', ') || '(none)'}`);
+        } else {
+          for (const [serverName, serverTools] of byServer) {
+            console.log(`\n\x1b[1m[MCP: ${serverName}]\x1b[0m  \x1b[2m${config.mcpServers?.[serverName] ?? ''}\x1b[0m`);
+            for (const t of serverTools) {
+              const toolShortName = t.name.slice(serverName.length + 2);
+              const confirm = t.requiresConfirmation ? ' \x1b[33m[confirm]\x1b[0m' : '';
+              console.log(`  \x1b[36m${toolShortName}\x1b[0m${confirm}`);
+              console.log(`    \x1b[2m${t.description}\x1b[0m`);
+            }
+          }
+        }
+        console.log();
+        askUser();
+        return;
+      }
+
       if (message === '/help') {
         console.log('Commands:');
         console.log('  /help                  Show this help');
@@ -278,6 +308,8 @@ async function main(): Promise<void> {
         console.log('  /facts                 Show session facts');
         console.log('  /invariants            Show all invariants (global + session)');
         console.log('  /invariant <rule>      Add a session-local invariant rule');
+        console.log('  /mcp                   List all MCP tools from connected servers');
+        console.log('  /mcp <server>          List tools from a specific MCP server');
         console.log('  /exit  /quit           Exit the agent');
         askUser();
         return;
@@ -295,6 +327,7 @@ async function main(): Promise<void> {
   async function presentOptions(options: string[], recommended?: number): Promise<string | null> {
     const CUSTOM = '__custom__';
     rl.pause();
+    bottomBar.drawStatus();
     const choice = await arrowSelect('Choose an option:', [
       ...options.map((o, i) => ({
         value: o,
@@ -302,29 +335,91 @@ async function main(): Promise<void> {
         hint: i === recommended ? '★ recommended' : undefined,
       })),
       { value: CUSTOM, label: 'Type your own response' },
-    ]);
+    ], 0, 1);
     rl.resume();
     if (choice === null || choice === CUSTOM) return null;
     return choice;
   }
 
+  async function promptStepChoice(): Promise<void> {
+    rl.pause();
+    bottomBar.drawStatus();
+    const choice = await arrowSelect('Step complete. What next?', [
+      { value: 'continue', label: '\x1b[32mContinue to next step\x1b[0m', hint: '★ recommended' },
+      { value: 'modify',   label: 'Modify the plan' },
+      { value: 'ask',      label: '\x1b[2mAsk a question\x1b[0m' },
+    ], 0, 1);
+    rl.resume();
+    if (choice === 'continue') {
+      await handleTurn('[SYSTEM] Continue executing the next step of the plan. Pick up exactly where you left off.');
+      return;
+    }
+    askUser();
+  }
+
+  async function promptValidationChoice(): Promise<void> {
+    rl.pause();
+    bottomBar.drawStatus();
+    const choice = await arrowSelect('All steps complete. Run validation?', [
+      { value: 'run',  label: '\x1b[36mRun validation\x1b[0m', hint: '★ recommended' },
+      { value: 'skip', label: '\x1b[2mSkip, mark as done\x1b[0m' },
+    ], 0, 1);
+    rl.resume();
+
+    if (choice === 'run') {
+      sm.taskMachine.transition('CONFIRM'); // execution → validation
+      renderer.showStateChange('execution', 'validation', 'CONFIRM');
+      await handleTurn('[SYSTEM] All steps are complete. Begin validation now. Review what was implemented against the plan.');
+    } else if (choice === 'skip') {
+      sm.taskMachine.transition('CONFIRM'); // execution → validation
+      sm.taskMachine.transition('CONFIRM'); // validation → done
+      renderer.showStateChange('execution', 'done', 'CONFIRM');
+      ltm.endSession(sessionId, sm.taskMachine.task?.task ?? null);
+      askUser();
+    } else {
+      askUser();
+    }
+  }
+
+  async function promptDoneChoice(): Promise<void> {
+    rl.pause();
+    bottomBar.drawStatus();
+    const choice = await arrowSelect('Validation complete. Mark as done?', [
+      { value: 'done', label: '\x1b[32mMark as done\x1b[0m', hint: '★ recommended' },
+      { value: 'back', label: 'Back to execution' },
+    ], 0, 1);
+    rl.resume();
+
+    if (choice === 'done') {
+      sm.taskMachine.transition('CONFIRM'); // validation → done
+      renderer.showStateChange('validation', 'done', 'CONFIRM');
+      ltm.endSession(sessionId, sm.taskMachine.task?.task ?? null);
+      askUser();
+    } else {
+      sm.taskMachine.transition('OTHER'); // validation → execution
+      renderer.showStateChange('validation', 'execution', 'OTHER');
+      await handleTurn('[SYSTEM] User wants to go back to execution to fix issues. Resume execution from the current step.');
+    }
+  }
+
   async function promptExecutionChoice(context: 'start' | 'resume'): Promise<void> {
     const task = sm.taskMachine.task;
     rl.pause();
+    bottomBar.drawStatus();
     let choice: string | null;
     if (context === 'start') {
       choice = await arrowSelect('Plan is ready. What would you like to do?', [
         { value: 'execute', label: '\x1b[32mStart execution\x1b[0m', hint: '★ recommended' },
         { value: 'modify',  label: 'Modify the plan' },
         { value: 'ask',     label: '\x1b[2mAsk a question\x1b[0m' },
-      ]);
+      ], 0, 1);
     } else {
       const stepInfo = task ? `step ${task.step + 1}/${task.total} — "${task.current}"` : 'in progress';
       choice = await arrowSelect(`Resume execution (${stepInfo})?`, [
         { value: 'execute', label: '\x1b[32mContinue execution\x1b[0m', hint: '★ recommended' },
         { value: 'ask',     label: 'Ask / discuss the plan' },
         { value: 'modify',  label: '\x1b[2mModify the plan\x1b[0m' },
-      ]);
+      ], 0, 1);
     }
     rl.resume();
     if (choice === null || choice === 'ask' || choice === 'modify') {
@@ -369,8 +464,22 @@ async function main(): Promise<void> {
 
     console.log();
 
-    if (result?.autoContinue) {
-      await handleTurn('[SYSTEM] Continue executing the next step of the plan. Pick up exactly where you left off.');
+    if (result?.stats) {
+      bottomBar.update(result.stats);
+    }
+
+    if (result?.stepCompleted || result?.autoContinue) {
+      const task = sm.taskMachine.task;
+      if (task && task.step >= task.total) {
+        await promptValidationChoice();
+      } else {
+        await promptStepChoice();
+      }
+      return;
+    }
+
+    if (result?.validationComplete) {
+      await promptDoneChoice();
       return;
     }
 
@@ -394,7 +503,7 @@ async function main(): Promise<void> {
   rl.on('close', () => {
     console.log('\nGoodbye!');
     ltm.close();
-    process.exit(0);
+    mcpClient.shutdown().finally(() => process.exit(0));
   });
 
   if (isResume && sm.taskMachine.state === 'execution') {
