@@ -122,6 +122,18 @@ async function main(): Promise<void> {
   }
   mkdirSync(sandboxDir, { recursive: true });
 
+  // Auto-register Linear MCP if LINEAR_API_KEY is set
+  const linearApiKey = process.env.LINEAR_API_KEY;
+  if (linearApiKey && !config.mcpServers?.['linear']) {
+    config = {
+      ...config,
+      mcpServers: {
+        ...config.mcpServers,
+        linear: 'tsx mcp-servers/linear/index.ts',
+      },
+    };
+  }
+
   // Register tools
   const tools = new ToolRegistry();
   tools.sandboxDir = sandboxDir;

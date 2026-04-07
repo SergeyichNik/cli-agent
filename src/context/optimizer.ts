@@ -90,12 +90,19 @@ export function buildSystemPrompt(
   const invariantLines = allInvariants.map((inv) => `- ${inv}`).join('\n');
 
   const stateBlock = buildStateBlock(taskState, task);
+
+  const mcpServers = config.mcpServers ?? {};
+  const mcpNames = Object.keys(mcpServers).filter((s) => s !== 'files');
+  const mcpBlock = mcpNames.length > 0
+    ? `\n## Available External Integrations (MCP)\nYou have access to real external services via MCP tools.\n\n### CRITICAL: When to use MCP tools vs local tools\n\n**Scenario A — user asks to CREATE/LIST/UPDATE things IN an external service:**\n> "create Linear tasks for MVP", "add issues to GitHub", "show my Linear backlog"\n→ The ENTIRE plan must be MCP tool calls only. Do NOT create local files. Do NOT build anything locally. Every execution step = a call to the external service's MCP tool.\n\n**Scenario B — user asks to BUILD something and track it:**\n> "build a todo app and create Linear tasks to track it"\n→ Plan can mix local steps AND MCP steps.\n\nIf the user's request mentions an external service name (${mcpNames.join(', ')}) as the destination, treat it as Scenario A.\n\nAvailable services:\n${mcpNames.map((name) => `- **${name}**: \`${name}__list_teams\` (get team UUID first!), \`${name}__create_issue\`, \`${name}__list_issues\`, \`${name}__update_issue\`. Always call \`${name}__list_teams\` before \`${name}__create_issue\` to get the required UUID.`).join('\n')}\n`
+    : '';
+
   const cwdBlock = sandboxDir
     ? `\n## Working Directory\nYour current working directory for ALL file and shell operations is: ${sandboxDir}\nAll paths must be relative to this directory. Do not assume project-root paths exist here.\n`
     : '';
 
   return `You are a CLI code assistant agent helping ${config.userName ?? 'the user'}.
-
+${mcpBlock}
 ## User Preferences
 - Preferred language: ${config.preferredLanguage ?? 'English'}
 - Response style: ${config.responseStyle ?? 'concise'}
