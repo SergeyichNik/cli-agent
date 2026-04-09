@@ -174,10 +174,12 @@ async function main(): Promise<void> {
 
   const confirmFn = async (toolLabel: string): Promise<boolean> => {
     rl.pause();
+    // collapseLabel: show only the tool name (strip args) in the collapsed summary
+    const toolName = toolLabel.replace(/\(.*/, '');
     const choice = await arrowSelect(`Allow \x1b[1m${toolLabel}\x1b[0m?`, [
       { value: true,  label: '\x1b[32mYes, allow\x1b[0m' },
       { value: false, label: '\x1b[2mNo, skip\x1b[0m' },
-    ]);
+    ], 0, 0, true, `Allow \x1b[1m${toolName}\x1b[0m`);
     rl.resume();
     return choice ?? false;
   };

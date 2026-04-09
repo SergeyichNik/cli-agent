@@ -6,16 +6,32 @@ import readline from 'readline';
 
 export type SelectOption<T> = { value: T; label: string; hint?: string };
 
+function stripAnsi(s: string): string {
+  return s.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
+/** How many terminal rows does `prefix + text` occupy at the given column width? */
+function visualRows(text: string, prefix: string, cols: number): number {
+  const visible = prefix + stripAnsi(text);
+  return Math.max(1, Math.ceil(visible.length / cols));
+}
+
 export async function arrowSelect<T>(
   message: string,
   options: SelectOption<T>[],
   initialIndex = 0,
   reserveAbove = 0,
   collapse = true,
+  collapseLabel?: string,
 ): Promise<T | null> {
   return new Promise((resolve) => {
     let idx = Math.max(0, Math.min(initialIndex, options.length - 1));
-    const height = options.length + 1; // message line + option lines
+
+    // Calculate actual terminal rows the message occupies (accounts for line wrapping)
+    const cols = process.stdout.columns ?? 80;
+    const msgRows = visualRows(message, '? ', cols);
+    const height = options.length + msgRows; // total rows: wrapped message + option lines
+
     let rendered = false;
 
     // Reserve vertical space. reserveAbove accounts for lines already printed above
@@ -28,8 +44,12 @@ export async function arrowSelect<T>(
       if (rendered) process.stdout.write(`\x1b[${height}A`);
       rendered = true;
 
-      // Message line
+      // Message line (may wrap across multiple terminal rows)
       process.stdout.write(`\x1b[2K\r\x1b[1m? \x1b[0m\x1b[1m${message}\x1b[0m\n`);
+      // Clear any extra rows the wrapped message occupies
+      for (let r = 1; r < msgRows; r++) {
+        process.stdout.write('\x1b[2K\r\n');
+      }
 
       // Option lines
       for (let i = 0; i < options.length; i++) {
@@ -55,18 +75,20 @@ export async function arrowSelect<T>(
     render();
 
     function collapseMenu() {
-      // Erase the menu and replace with a single summary line
-      process.stdout.write(`\x1b[${height}A`); // move to menu start
-      // Strip ANSI codes from label for cleaner summary
+      // Move back to the very first row of the menu
+      process.stdout.write(`\x1b[${height}A`);
+      // Strip ANSI codes from selected label for cleaner summary
       const rawLabel = options[idx].label.replace(/\x1b\[[0-9;]*m/g, '');
-      process.stdout.write(`\x1b[2K\r\x1b[2m◇\x1b[0m ${message} \x1b[2m→\x1b[0m ${rawLabel}\n`);
-      // Erase remaining option lines
-      for (let i = 0; i < options.length; i++) {
+      const summaryText = collapseLabel ?? message;
+      // Write the single collapsed summary line
+      process.stdout.write(`\x1b[2K\r\x1b[2m◇\x1b[0m ${summaryText} \x1b[2m→\x1b[0m ${rawLabel}\n`);
+      // Erase all remaining rows (wrapped message rows + option rows)
+      for (let i = 0; i < height - 1; i++) {
         process.stdout.write('\x1b[2K\r');
-        if (i < options.length - 1) process.stdout.write('\n');
+        if (i < height - 2) process.stdout.write('\n');
       }
-      // Move cursor back to right after summary line
-      if (options.length > 1) process.stdout.write(`\x1b[${options.length - 1}A`);
+      // Move cursor back to right after the summary line
+      if (height > 2) process.stdout.write(`\x1b[${height - 2}A`);
     }
 
     function cleanup() {
