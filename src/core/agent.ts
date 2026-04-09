@@ -95,8 +95,8 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
     // Block all tool calls in planning state — agent must plan first, not act
     if (sm.taskMachine.state === 'planning') {
       renderer.finalize();
-      renderer.showInfo('[planning] Tool calls are not allowed in planning state. Provide a plan first.');
-      // Return the blocked tool calls as errors so LLM knows
+      renderer.showInfo('[planning] Tool calls blocked — emitting plan first.');
+      // Add blocked tool call errors to context
       messages.push({
         role: 'assistant',
         content: text || null,
@@ -110,12 +110,27 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,
-          content: 'Error: Tool calls are not allowed in planning state. You must present a plan first using {"intent":"CONFIRM","plan":[...]}.',
+          content: 'BLOCKED: Tool calls are not allowed in planning state.',
         });
       }
+      // Force the LLM to emit CONFIRM + plan immediately — no more looping
+      messages.push({
+        role: 'user',
+        content: '[SYSTEM] You are in PLANNING state and cannot call tools yet. Your next response MUST start with a plan line and nothing else before it:\n{"intent":"CONFIRM","plan":["Step 1: <what you will do>"]}\nAfter transitioning to execution you can call tools freely. Do NOT attempt any tool calls in this response.',
+      });
       renderer.startSpinner();
-      depth++;
-      continue;
+      fullResponseText = '';
+      for await (const chunk of provider.stream(messages, { temperature: 0.7 })) {
+        if (chunk.type === 'text') {
+          renderer.onToken(chunk.text);
+          fullResponseText += chunk.text;
+        } else if (chunk.type === 'usage') {
+          totalInputTokens += chunk.input_tokens;
+          totalOutputTokens += chunk.output_tokens;
+        }
+      }
+      renderer.finalize();
+      break; // let metadata parsing handle the CONFIRM transition
     }
 
     // Flush any buffered text before showing tool calls
@@ -389,8 +404,8 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
     validationComplete = true;
   }
 
-  // Show task progress bar only when there are steps to display (bottom bar covers state-only case)
-  if (sm.taskMachine.task && sm.taskMachine.state !== 'error' && sm.taskMachine.task.total > 0) {
+  // Show task progress bar only during active states (done/error are handled elsewhere)
+  if (sm.taskMachine.task && sm.taskMachine.state !== 'error' && sm.taskMachine.state !== 'done' && sm.taskMachine.task.total > 0) {
     renderer.showTaskProgress(sm.taskMachine.task);
   }
 

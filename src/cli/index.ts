@@ -367,6 +367,10 @@ async function main(): Promise<void> {
     sm.taskMachine.transition('CONFIRM'); // validation → done
     renderer.showStateChange('validation', 'done', 'CONFIRM');
     ltm.endSession(sessionId, sm.taskMachine.task?.task ?? null);
+    bottomBar.patchTaskState('done');
+    if (sm.taskMachine.task) {
+      renderer.showTaskProgress(sm.taskMachine.task); // ✓ All N steps completed
+    }
     askUser();
   }
 

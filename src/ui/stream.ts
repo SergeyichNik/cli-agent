@@ -160,25 +160,12 @@ export class StreamRenderer {
       return;
     }
 
-    // Line 1: state + progress bar + step counter + current step
     const pct = task.total > 0 ? task.step / task.total : 0;
     const filled = Math.round(pct * 10);
     const bar = `${stateColor}${'█'.repeat(filled)}\x1b[2m${'░'.repeat(10 - filled)}\x1b[0m`;
-    const stepLabel = `\x1b[1m${task.step}/${task.total}\x1b[0m`;
-    const currentText = task.current ? `  \x1b[2m›\x1b[0m  ${task.current}` : '';
-    process.stdout.write(`${stateLabel}  [${bar}]  Step ${stepLabel}${currentText}\n`);
-
-    // Steps list (one per line)
-    for (let i = 0; i < task.plan.length; i++) {
-      const step = task.plan[i];
-      if (i < task.step) {
-        process.stdout.write(`  \x1b[32m✓\x1b[0m \x1b[2m${step}\x1b[0m\n`);
-      } else if (i === task.step) {
-        process.stdout.write(`  ${stateColor}●\x1b[0m ${step}\n`);
-      } else {
-        process.stdout.write(`  \x1b[2m○ ${step}\x1b[0m\n`);
-      }
-    }
+    const stepLabel = `\x1b[2m${task.step}/${task.total}\x1b[0m`;
+    const currentText = task.current ? `  \x1b[2m›\x1b[0m  \x1b[2m${task.current}\x1b[0m` : '';
+    process.stdout.write(`${stateLabel}  [${bar}]  ${stepLabel}${currentText}\n`);
   }
 
   private taskStateColor(state: TaskState): string {

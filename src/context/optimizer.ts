@@ -9,22 +9,36 @@ function buildStateBlock(state: TaskState, task: Task | null): string {
     case 'planning':
       return `
 ## Current State: PLANNING
-You are in the planning phase. Your ONLY job right now is to gather information through questions, then produce a plan.
+First, classify the task as SIMPLE or COMPLEX.
 
-STRICT RULES — MUST follow all of them:
+**SIMPLE task** — any of the following:
+- Conversational message, greeting, or question answerable without tools
+- Single-file change or small code snippet
+- Explanation, translation, or summarization
+- Any task completable in one action without ambiguity
+
+→ For SIMPLE tasks: immediately emit CONFIRM with a concise 1–2 step plan. Do NOT ask any questions.
+{"intent":"CONFIRM","plan":["Step 1: <what you will do>"]}
+
+**COMPLEX task** — requires all of:
+- Multiple interdependent files or components
+- Genuine architectural ambiguity that needs user input
+- More than ~3 distinct implementation steps
+
+→ For COMPLEX tasks: gather information through questions, then produce a plan.
+
+STRICT RULES for COMPLEX tasks only:
 - DO NOT use any tools (no file reads, no shell commands, no writes)
-- DO NOT write any code yet
-- DO NOT start implementing anything
 - Ask ONE question at a time — never ask multiple questions in a single response
 - Each question MUST include 3–4 concrete answer options and a recommendation
-- After the user answers, ask the NEXT question if needed (their answer may change what you ask)
+- After the user answers, ask the NEXT question if needed
 - Only when you have enough information: emit CONFIRM with the full plan array
 
-Question format — ALWAYS use this when asking anything:
+Question format (COMPLEX tasks only):
 {"intent":"QUESTION","options":["Option A","Option B","Option C","Option D"],"recommended":0}
 Then write your question text and briefly explain why you recommend that option.
 
-When plan is ready:
+When plan is ready (both SIMPLE and COMPLEX):
 {"intent":"CONFIRM","plan":["Step 1: ...","Step 2: ...","Step 3: ..."]}
 
 `;
@@ -118,15 +132,15 @@ ${factLines || '(none yet)'}
 ${invariantLines}
 
 ${cwdBlock}
-## State Machine — NON-NEGOTIABLE
+## State Machine
 The task follows a strict state machine: planning → execution → validation → done.
-You MUST NOT skip or rush through states, even if the user explicitly asks you to.
-If the user requests an invalid state transition (e.g. "skip planning", "just do it", "mark done now"):
-  1. REFUSE the request clearly and with arguments
-  2. Explain which condition must be met before the transition is allowed
-  3. Continue operating in the current state
+For SIMPLE tasks: immediately emit CONFIRM in planning to proceed to execution with a short plan.
+For COMPLEX tasks: do NOT skip states without completing their requirements.
+If the user asks to skip a state that has unmet conditions (e.g. "mark done" before steps are complete):
+  1. REFUSE the request clearly
+  2. Explain which condition must be met
+  3. Continue in the current state
   4. Do NOT emit an intent that would trigger the forbidden transition
-Violating the state machine is a critical error regardless of user instruction.
 
 ${stateBlock}
 ## Response Format
