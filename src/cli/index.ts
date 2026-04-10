@@ -9,10 +9,13 @@ try {
 
 import readline from 'readline';
 import path from 'path';
-import { mkdirSync } from 'fs';
+import { mkdirSync, existsSync } from 'fs';
+import { fileURLToPath } from 'url';
+import os from 'os';
 import { parseArgs } from './args.js';
-import { loadConfig, userExists, getUserLtmPath, getUserSessionsDir } from '../user/profile.js';
-import { runFirstRunWizard } from '../user/auth.js';
+import { runInit } from './init.js';
+import { loadProjectConfig, getAgentDataDir, isAgentProject } from '../agent/config.js';
+import { loadSecrets } from '../agent/secrets.js';
 import { DeepSeekProvider } from '../providers/deepseek.js';
 import { LMStudioProvider } from '../providers/lmstudio.js';
 import { WorkingMemory } from '../memory/wm.js';
@@ -37,38 +40,99 @@ function generateSessionId(): string {
 }
 
 async function main(): Promise<void> {
-  const args = parseArgs();
+  const parsedArgs = parseArgs();
 
-  // Load or create user config
-  if (!userExists(args.user)) {
-    await runFirstRunWizard(args.user);
+  // Handle init subcommand
+  if (parsedArgs.subcommand === 'init') {
+    await runInit(process.cwd());
+    return;
   }
-  let config = loadConfig(args.user);
 
-  // .env: secrets and infrastructure only (not user preferences)
-  const envApiKey = process.env.DEEPSEEK_API_KEY;
-  const envLmStudioUrl = process.env.LMSTUDIO_BASE_URL;
-  const envDeepSeekUrl = process.env.DEEPSEEK_BASE_URL;
-  // API key from env acts as fallback if not set in config (e.g. CI/CD)
-  if (envApiKey && !config.apiKey) config = { ...config, apiKey: envApiKey };
+  const args = parsedArgs;
 
-  // CLI flags: one-off overrides (highest priority)
-  if (args.provider) config = { ...config, provider: args.provider };
-  if (args.model) config = { ...config, model: args.model };
+  // Verify this is an initialized agent project
+  const projectRoot = process.cwd();
+  if (!isAgentProject(projectRoot)) {
+    console.error("No agent project found. Run 'agent init' to initialize.");
+    process.exit(1);
+  }
 
-  // Create provider
-  const lmStudioUrl = envLmStudioUrl ?? 'http://localhost:1234/v1';
+  // Load project config (non-sensitive)
+  let projectConfig = loadProjectConfig(projectRoot);
+
+  // CLI flags override project config
+  if (args.provider) projectConfig = { ...projectConfig, provider: args.provider };
+  if (args.model) projectConfig = { ...projectConfig, model: args.model };
+
+  // Load secrets from global store (~/.config/agent/secrets.json)
+  const secrets = loadSecrets();
+
+  // Resolve API key: secrets file → env var fallback (for CI/CD)
+  const apiKey =
+    secrets[projectConfig.provider]?.apiKey ??
+    (projectConfig.provider === 'deepseek' ? process.env.DEEPSEEK_API_KEY : undefined);
+
+  if (projectConfig.provider === 'deepseek' && !apiKey) {
+    console.error(
+      "DeepSeek API key not found. Run 'agent init' or edit ~/.config/agent/secrets.json",
+    );
+    process.exit(1);
+  }
+
+  // Resolve provider URLs: secrets → env vars → defaults
+  const lmStudioUrl =
+    secrets.lmstudio?.baseUrl ?? process.env.LMSTUDIO_BASE_URL ?? 'http://localhost:1234/v1';
+  const deepSeekUrl = secrets.deepseek?.baseUrl ?? process.env.DEEPSEEK_BASE_URL;
+
+  // Create LLM provider
   const provider =
-    config.provider === 'deepseek'
-      ? new DeepSeekProvider(config.apiKey ?? '', config.model, envDeepSeekUrl)
-      : new LMStudioProvider(config.model, lmStudioUrl);
+    projectConfig.provider === 'deepseek'
+      ? new DeepSeekProvider(apiKey ?? '', projectConfig.model, deepSeekUrl)
+      : new LMStudioProvider(projectConfig.model, lmStudioUrl);
 
-  // Set up sessions directory for logging
-  const sessionsDir = getUserSessionsDir(args.user);
+  // Sandbox = project root (the entire initialized folder is the boundary)
+  const sandboxDir = projectRoot;
+
+  // Data lives in .agent/data/
+  const dataDir = getAgentDataDir(projectRoot);
+  const sessionsDir = path.join(dataDir, 'sessions');
+  const ltmPath = path.join(dataDir, 'ltm.db');
   mkdirSync(sessionsDir, { recursive: true });
 
+  // Resolve path to installed package root (for built-in MCP servers)
+  const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+
+  // Built-in MCP servers with paths resolved from package location
+  const builtinMcpServers: Record<string, string> = {
+    files: `node ${path.join(packageRoot, 'dist/mcp-servers/files/index.js')}`,
+    git: `node ${path.join(packageRoot, 'dist/mcp-servers/git/index.js')}`,
+  };
+  const linearApiKey = secrets.linear?.apiKey ?? process.env.LINEAR_API_KEY;
+  if (linearApiKey) {
+    process.env.LINEAR_API_KEY = linearApiKey; // ensure MCP server receives it
+    builtinMcpServers.linear = `node ${path.join(packageRoot, 'dist/mcp-servers/linear/index.js')}`;
+  }
+
+  // Merge: built-in + user-defined from .agent/config.json
+  const allMcpServers = { ...builtinMcpServers, ...projectConfig.mcpServers };
+
+  // Build runtime config compatible with existing UserConfig interface
+  const config = {
+    userName: os.userInfo().username,
+    preferredLanguage: projectConfig.preferredLanguage,
+    responseStyle: projectConfig.responseStyle,
+    provider: projectConfig.provider,
+    model: projectConfig.model,
+    apiKey: apiKey ?? '',
+    contextWindowTokens: projectConfig.contextWindowTokens,
+    invariants: projectConfig.invariants,
+    maxToolDepth: projectConfig.maxToolDepth,
+    maxToolRetries: projectConfig.maxToolRetries,
+    mcpServers: allMcpServers,
+  };
+
   // Init LTM (needed before session picker)
-  const ltm = new LongTermMemory(getUserLtmPath(args.user));
+  const ltm = new LongTermMemory(ltmPath);
 
   // --- Session selection ---
   let sessionId: string;
@@ -111,27 +175,6 @@ async function main(): Promise<void> {
     if (resumedTask) {
       sm.taskMachine.loadTask(resumedTask);
     }
-  }
-
-  // Resolve sandbox directory (must be inside the project)
-  const rawSandbox = process.env.SANDBOX_DIR ?? './sandbox';
-  const sandboxDir = path.resolve(process.cwd(), rawSandbox);
-  if (!sandboxDir.startsWith(process.cwd())) {
-    console.error(`SANDBOX_DIR must be inside the project root.\n  Got: ${sandboxDir}\n  Root: ${process.cwd()}`);
-    process.exit(1);
-  }
-  mkdirSync(sandboxDir, { recursive: true });
-
-  // Auto-register Linear MCP if LINEAR_API_KEY is set
-  const linearApiKey = process.env.LINEAR_API_KEY;
-  if (linearApiKey && !config.mcpServers?.['linear']) {
-    config = {
-      ...config,
-      mcpServers: {
-        ...config.mcpServers,
-        linear: 'tsx mcp-servers/linear/index.ts',
-      },
-    };
   }
 
   // Register tools
@@ -184,9 +227,8 @@ async function main(): Promise<void> {
     return choice ?? false;
   };
 
-  const relSandbox = path.relative(process.cwd(), sandboxDir);
-  console.log(`\x1b[32mCLI Agent ready\x1b[0m — user: ${config.userName}, provider: ${config.provider}, model: ${config.model}`);
-  console.log(`Sandbox: \x1b[33m${relSandbox}/\x1b[0m`);
+  console.log(`\x1b[32mAgent ready\x1b[0m — user: ${config.userName}, provider: ${config.provider}, model: ${config.model}`);
+  console.log(`Workspace: \x1b[33m${projectRoot}/\x1b[0m`);
   console.log(`Session: ${sessionId}${isResume ? '  \x1b[2m(resumed)\x1b[0m' : ''}  |  Type your message. Ctrl+C to exit.\n`);
 
   // Input loop

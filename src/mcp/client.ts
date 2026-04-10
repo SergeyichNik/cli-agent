@@ -4,7 +4,10 @@ import type { Tool } from '../tools/base.js';
 import type { UserConfig } from '../user/profile.js';
 
 /** MCP tool names that require user confirmation before execution */
-const DESTRUCTIVE_TOOLS = new Set(['write_file', 'delete_file', 'move_file']);
+const DESTRUCTIVE_TOOLS = new Set([
+  'write_file', 'delete_file', 'move_file',
+  'git_add', 'git_commit', 'git_checkout', 'git_init',
+]);
 
 export class McpClient {
   private clients = new Map<string, Client>();

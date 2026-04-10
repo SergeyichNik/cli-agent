@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "mcp-servers",
+    "outDir": "dist/mcp-servers"
+  },
+  "include": ["mcp-servers/**/*"]
+}

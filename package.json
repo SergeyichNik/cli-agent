@@ -1,17 +1,17 @@
 {
-  "name": "cli-agent",
+  "name": "agent",
   "version": "1.0.0",
   "description": "CLI Code Assistant Agent with long-term memory and agentic tool execution",
   "type": "module",
   "bin": {
-    "cli-agent": "./src/cli/index.ts"
+    "agent": "./dist/cli/index.js"
   },
   "scripts": {
-    "start": "tsx src/cli/index.ts",
-    "dev": "tsx watch src/cli/index.ts",
-    "build": "tsc",
-    "clean": "node --input-type=module --eval \"import{rmSync}from'node:fs';['data','dist'].forEach(d=>{rmSync(d,{recursive:true,force:true});console.log('Removed '+d)})\"",
-    "clean:user": "tsx scripts/clean-user.ts"
+    "start": "node dist/cli/index.js",
+    "dev": "tsx src/cli/index.ts",
+    "build": "node --input-type=module --eval \"import{rmSync}from'node:fs';rmSync('dist',{recursive:true,force:true})\" && tsc && tsc -p tsconfig.mcp.json && chmod +x dist/cli/index.js",
+    "clean": "node --input-type=module --eval \"import{rmSync}from'node:fs';['dist'].forEach(d=>{rmSync(d,{recursive:true,force:true});console.log('Removed '+d)})\"",
+    "clean:data": "node --input-type=module --eval \"import{rmSync}from'node:fs';rmSync('.agent/data',{recursive:true,force:true});console.log('Removed .agent/data')\""
   },
   "repository": {
     "type": "git",
