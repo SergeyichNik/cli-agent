@@ -3,3 +3,6 @@ dist/
 data/
 .env
 *.log
+
+# Agent data (sessions, LTM database)
+.agent/data

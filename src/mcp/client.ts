@@ -7,6 +7,7 @@ import type { UserConfig } from '../user/profile.js';
 const DESTRUCTIVE_TOOLS = new Set([
   'write_file', 'delete_file', 'move_file',
   'git_add', 'git_commit', 'git_checkout', 'git_init',
+  'reindex',
 ]);
 
 export class McpClient {

@@ -106,6 +106,7 @@ async function main(): Promise<void> {
   const builtinMcpServers: Record<string, string> = {
     files: `node ${path.join(packageRoot, 'dist/mcp-servers/files/index.js')}`,
     git: `node ${path.join(packageRoot, 'dist/mcp-servers/git/index.js')}`,
+    search: `node ${path.join(packageRoot, 'dist/mcp-servers/search/index.js')}`,
   };
   const linearApiKey = secrets.linear?.apiKey ?? process.env.LINEAR_API_KEY;
   if (linearApiKey) {

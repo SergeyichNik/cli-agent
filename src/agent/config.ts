@@ -13,6 +13,13 @@ export const ProjectConfigSchema = z.object({
   invariants: z.array(z.string()).default([]),
   // Only user-defined additional MCP servers. Built-in servers (files, linear) are auto-registered.
   mcpServers: z.record(z.string(), z.string()).default({}),
+  // Embedding provider config for the built-in search MCP server
+  embeddingProvider: z.object({
+    type: z.enum(['ollama', 'openai-compatible']).default('ollama'),
+    model: z.string().optional(),
+    url: z.string().optional(),
+    apiKey: z.string().optional(),
+  }).optional(),
 });
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
