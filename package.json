@@ -11,7 +11,12 @@
     "dev": "tsx src/cli/index.ts",
     "build": "node --input-type=module --eval \"import{rmSync}from'node:fs';rmSync('dist',{recursive:true,force:true})\" && tsc && tsc -p tsconfig.mcp.json && chmod +x dist/cli/index.js",
     "clean": "node --input-type=module --eval \"import{rmSync}from'node:fs';['dist'].forEach(d=>{rmSync(d,{recursive:true,force:true});console.log('Removed '+d)})\"",
-    "clean:data": "node --input-type=module --eval \"import{rmSync}from'node:fs';rmSync('.agent/data',{recursive:true,force:true});console.log('Removed .agent/data')\""
+    "clean:data": "node --input-type=module --eval \"import{rmSync}from'node:fs';rmSync('.agent/data',{recursive:true,force:true});console.log('Removed .agent/data')\"",
+    "demo:rag": "tsx demo/rag-compare.ts --mode rag",
+    "demo:no-rag": "tsx demo/rag-compare.ts --mode no-rag",
+    "demo:benchmark": "tsx demo/rag-benchmark.ts",
+    "demo:benchmark:rag": "tsx demo/rag-benchmark.ts --mode rag",
+    "demo:benchmark:no-rag": "tsx demo/rag-benchmark.ts --mode no-rag"
   },
   "repository": {
     "type": "git",
