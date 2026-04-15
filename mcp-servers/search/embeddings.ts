@@ -20,8 +20,7 @@ export class OllamaProvider implements EmbeddingProvider {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       // truncate: true — Ollama silently truncates inputs that exceed the model context
-      // num_ctx: 8192 — use the full context window if the Ollama version supports it
-      body: JSON.stringify({ model: this.model, input: texts, truncate: true, options: { num_ctx: 8192 } }),
+      body: JSON.stringify({ model: this.model, input: texts, truncate: true }),
     });
     if (!response.ok) {
       throw new Error(`Ollama embed failed (${response.status}): ${await response.text()}`);

@@ -245,8 +245,17 @@ server.registerTool('search', {
       .optional()
       .describe('Filter results to a specific chunking strategy'),
     source: z.string().optional().describe('Filter by source file path (partial match)'),
+    minScore: z
+      .number()
+      .min(0)
+      .max(1)
+      .default(0.3)
+      .describe(
+        'Minimum cosine similarity threshold (0–1). Chunks below this score are filtered out. ' +
+        'Default: 0.3. Set to 0 to disable filtering.',
+      ),
   },
-}, async ({ query, topK, strategy, source }) => {
+}, async ({ query, topK, strategy, source, minScore }) => {
   const statusInfo = db.getStatus();
   if (statusInfo.totalChunks === 0) {
     return {
@@ -265,17 +274,27 @@ server.registerTool('search', {
     return { content: [{ type: 'text' as const, text: `Embedding query failed: ${msg}` }] };
   }
 
-  const results = db.search(new Float32Array(queryEmbedding), topK ?? 5, strategy, source);
+  const effectiveMinScore = minScore ?? 0.3;
+  const results = db.search(new Float32Array(queryEmbedding), topK ?? 5, strategy, source, effectiveMinScore);
+  const totalBefore = (results as { totalBeforeFilter?: number }).totalBeforeFilter;
+
   if (results.length === 0) {
-    return { content: [{ type: 'text' as const, text: 'No results found.' }] };
+    const filterNote = effectiveMinScore > 0 && totalBefore !== undefined
+      ? ` (${totalBefore} chunks found but all below minScore: ${effectiveMinScore})`
+      : '';
+    return { content: [{ type: 'text' as const, text: `No results found.${filterNote}` }] };
   }
+
+  const filterLine = effectiveMinScore > 0 && totalBefore !== undefined
+    ? `Filtered: ${totalBefore} → ${results.length} chunks (minScore: ${effectiveMinScore})\n`
+    : '';
 
   const lines = results.map((r, i) => [
     `[${i + 1}] ${r.source}${r.section ? ` § ${r.section}` : ''} (score: ${r.score.toFixed(4)}, strategy: ${r.strategy})`,
     r.content.slice(0, 400) + (r.content.length > 400 ? '…' : ''),
   ].join('\n'));
 
-  return { content: [{ type: 'text' as const, text: lines.join('\n\n---\n\n') }] };
+  return { content: [{ type: 'text' as const, text: filterLine + lines.join('\n\n---\n\n') }] };
 });
 
 // --- Tool: index_status ---

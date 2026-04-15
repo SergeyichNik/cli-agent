@@ -1,26 +1,36 @@
 #!/usr/bin/env tsx
 /**
- * RAG Demo — День 22
+ * RAG Demo — День 23
+ *
+ * Требует предварительной индексации: npm run demo:index
  *
  * Usage:
- *   tsx demo/rag-compare.ts --mode rag    "Как зовут CEO компании?"
- *   tsx demo/rag-compare.ts --mode no-rag "Как зовут CEO компании?"
+ *   tsx demo/rag-compare.ts --mode rag         "Кто CEO ОсьминогСофт?"
+ *   tsx demo/rag-compare.ts --mode rag-rerank  "Кто CEO ОсьминогСофт?"
+ *   tsx demo/rag-compare.ts --mode rag          # автопрогон всех вопросов
  *
  * npm scripts:
- *   npm run demo:rag    -- "вопрос"
- *   npm run demo:no-rag -- "вопрос"
+ *   npm run demo:rag         -- "вопрос"
+ *   npm run demo:rag-rerank  -- "вопрос"
  */
 
 import path from 'path';
-import { readFileSync } from 'fs';
 import { SearchDB } from '../mcp-servers/search/db.js';
 import { createProvider as createEmbeddingProvider, type EmbeddingConfig } from '../mcp-servers/search/embeddings.js';
-import { chunkFixed, truncateToTokens } from '../mcp-servers/search/chunker.js';
 import { loadProjectConfig } from '../src/agent/config.js';
 import { loadSecrets } from '../src/agent/secrets.js';
 import { DeepSeekProvider } from '../src/providers/deepseek.js';
 import { LMStudioProvider } from '../src/providers/lmstudio.js';
 import type { Message } from '../src/providers/base.js';
+
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+
+const TOP_K_RAG     = 8;   // RAG без фильтра: шумный контекст из нескольких компаний
+const TOP_K_BEFORE  = 15;  // RAG+rerank: кандидаты до фильтрации
+const TOP_K_AFTER   = 3;   // RAG+rerank: финальный контекст после фильтрации
+const MIN_SCORE     = 0.50; // порог отсечения
 
 // ---------------------------------------------------------------------------
 // Parse CLI args
@@ -30,31 +40,42 @@ const rawArgs = process.argv.slice(2);
 const modeIdx = rawArgs.indexOf('--mode');
 
 if (modeIdx === -1 || !rawArgs[modeIdx + 1]) {
-  console.error('Usage: tsx demo/rag-compare.ts --mode <rag|no-rag> "<question>"');
+  console.error('Usage: tsx demo/rag-compare.ts --mode <rag|rag-rerank> ["<question>"]');
   process.exit(1);
 }
 
 const mode = rawArgs[modeIdx + 1];
-if (mode !== 'rag' && mode !== 'no-rag') {
-  console.error('Error: --mode must be "rag" or "no-rag"');
+if (mode !== 'rag' && mode !== 'rag-rerank') {
+  console.error('Error: --mode must be "rag" or "rag-rerank"');
   process.exit(1);
 }
 
 const questionParts = rawArgs.filter((_, i) => i !== modeIdx && i !== modeIdx + 1);
-const question = questionParts.join(' ').trim();
-
-if (!question) {
-  console.error('Error: provide a question as the last argument');
-  process.exit(1);
-}
+const singleQuestion = questionParts.join(' ').trim();
 
 // ---------------------------------------------------------------------------
-// Setup: config, secrets, LLM provider
+// Вопросы для автопрогона
+// ---------------------------------------------------------------------------
+
+const ALL_QUESTIONS = [
+  'Что такое КальмарКоин и как он используется для зарплаты?',
+  'Как работает телепатический компилятор в ОсьминогСофт?',
+  'Кто такой Геннадий Щупальцев?',
+  'Что такое компот из антарктического криля?',
+  'Как работает Brainfuck с патчем от 2031 года?',
+  'Где работает белка-аналитик и что она делает?',
+  'Что такое нейросеть на пчёлах и как она работает?',
+  'Что поют сотрудники ПингвинТех на каждом деплое?',
+  'Как добраться до Атлантиды на подводном трамвае?',
+  'Кто такой Прокопий Берложников и почему ушёл?',
+];
+
+// ---------------------------------------------------------------------------
+// Setup: config, secrets, LLM, embeddings, DB
 // ---------------------------------------------------------------------------
 
 const projectRoot = process.cwd();
 const dbPath = path.join(projectRoot, '.agent', 'data', 'search.db');
-const KNOWLEDGE_FILE = 'demo/knowledge.md';
 
 const config = loadProjectConfig(projectRoot);
 const secrets = loadSecrets();
@@ -62,9 +83,7 @@ const secrets = loadSecrets();
 const apiKey =
   secrets[config.provider]?.apiKey ??
   (config.provider === 'deepseek' ? process.env.DEEPSEEK_API_KEY : undefined);
-
-const lmStudioUrl =
-  secrets.lmstudio?.baseUrl ?? process.env.LMSTUDIO_BASE_URL ?? 'http://localhost:1234/v1';
+const lmStudioUrl = secrets.lmstudio?.baseUrl ?? process.env.LMSTUDIO_BASE_URL ?? 'http://localhost:1234/v1';
 const deepSeekUrl = secrets.deepseek?.baseUrl ?? process.env.DEEPSEEK_BASE_URL;
 
 const llm =
@@ -72,51 +91,20 @@ const llm =
     ? new DeepSeekProvider(apiKey ?? '', config.model, deepSeekUrl)
     : new LMStudioProvider(config.model, lmStudioUrl);
 
-// ---------------------------------------------------------------------------
-// Auto-index knowledge.md if not yet in the DB
-// ---------------------------------------------------------------------------
+const e = config.embeddingProvider;
+const embProvider = createEmbeddingProvider({
+  type: e?.type ?? 'ollama', model: e?.model, url: e?.url, apiKey: e?.apiKey,
+} as EmbeddingConfig);
 
-async function ensureIndexed(): Promise<void> {
-  const db = new SearchDB(dbPath);
-  const sources = db.getIndexedSources();
-  if (sources.includes(KNOWLEDGE_FILE)) return;
+const db = new SearchDB(dbPath);
 
-  console.log(`[RAG] knowledge.md не проиндексирована, индексирую...`);
-
-  const e = config.embeddingProvider;
-  const embCfg: EmbeddingConfig = { type: e?.type ?? 'ollama', model: e?.model, url: e?.url, apiKey: e?.apiKey };
-  const embProvider = createEmbeddingProvider(embCfg);
-
-  const fullPath = path.join(projectRoot, KNOWLEDGE_FILE);
-  const text = readFileSync(fullPath, 'utf-8');
-  const chunks = chunkFixed(text);
-
-  const texts = chunks.map(c => truncateToTokens(c.content));
-  const embeddings = await embProvider.embed(texts);
-
-  const now = Date.now();
-  const rows = chunks.map((chunk, i) => {
-    const f32 = new Float32Array(embeddings[i]);
-    return {
-      id: `${KNOWLEDGE_FILE}:fixed:${chunk.chunkIndex}`,
-      source: KNOWLEDGE_FILE,
-      title: 'knowledge.md',
-      section: chunk.section,
-      strategy: 'fixed' as const,
-      chunk_index: chunk.chunkIndex,
-      content: chunk.content,
-      token_count: chunk.tokenCount,
-      embedding: Buffer.from(f32.buffer),
-      indexed_at: now,
-    };
-  });
-
-  db.insertChunks(rows);
-  console.log(`[RAG] Готово: ${rows.length} чанков добавлено в индекс.\n`);
+if (db.getIndexedSources().length === 0) {
+  console.error('Индекс пуст. Сначала запусти: npm run demo:index');
+  process.exit(1);
 }
 
 // ---------------------------------------------------------------------------
-// Stream LLM response to stdout
+// Stream LLM response
 // ---------------------------------------------------------------------------
 
 async function streamAnswer(messages: Message[]): Promise<void> {
@@ -127,41 +115,60 @@ async function streamAnswer(messages: Message[]): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Main
+// Обработка одного вопроса
 // ---------------------------------------------------------------------------
 
-const divider = '─'.repeat(52);
-const label = mode === 'rag' ? '[ RAG ]' : '[ NO-RAG ]';
+const divider = '─'.repeat(60);
+const label = mode === 'rag' ? '[ RAG ]' : '[ RAG + RERANK ]';
 
-console.log(`\n${divider}`);
-console.log(`${label} ${question}`);
-console.log(divider);
-
-if (mode === 'no-rag') {
-  // Direct LLM call — no context injected
-  await streamAnswer([{ role: 'user', content: question }]);
-} else {
-  // RAG pipeline: embed → search → inject context → LLM
-  await ensureIndexed();
-
-  const db = new SearchDB(dbPath);
-  const e2 = config.embeddingProvider;
-  const embCfg: EmbeddingConfig = { type: e2?.type ?? 'ollama', model: e2?.model, url: e2?.url, apiKey: e2?.apiKey };
-  const embProvider = createEmbeddingProvider(embCfg);
+async function runQuestion(question: string, idx?: number, total?: number): Promise<void> {
+  const header = idx !== undefined ? `[${idx}/${total}] ` : '';
+  console.log(`\n${divider}`);
+  console.log(`${label}  ${header}${question}`);
+  console.log(divider);
 
   const [queryEmbedding] = await embProvider.embed([question]);
-  const results = db.search(new Float32Array(queryEmbedding), 3, undefined, KNOWLEDGE_FILE);
 
-  if (results.length === 0) {
-    console.error('[RAG] Релевантных чанков не найдено.');
-    process.exit(1);
+  if (mode === 'rag') {
+    // Без фильтра: берём TOP_K_RAG чанков — в контексте окажутся все компании
+    const results = db.search(new Float32Array(queryEmbedding), TOP_K_RAG);
+    const scores = results.map(r => `${r.source} ${r.score.toFixed(3)}`).join('\n  ');
+    console.log(`Чанков в контексте: ${results.length}`);
+    console.log(`  ${scores}\n`);
+    const context = results.map(r => `[${r.source}]\n${r.content}`).join('\n---\n');
+    const prompt = `Используй только следующий контекст для ответа на вопрос.\n\nКонтекст:\n\n${context}\n\nВопрос: ${question}`;
+    await streamAnswer([{ role: 'user', content: prompt }]);
+  } else {
+    // С фильтром: берём TOP_K_BEFORE кандидатов, отсекаем нерелевантные
+    const allResults = db.search(new Float32Array(queryEmbedding), TOP_K_BEFORE);
+    const filtered = allResults.filter(r => r.score >= MIN_SCORE).slice(0, TOP_K_AFTER);
+    const allScores = allResults.map(r => `${r.source} ${r.score.toFixed(3)}`).join('\n  ');
+    console.log(`Кандидатов: ${allResults.length}`);
+    console.log(`  ${allScores}`);
+    console.log(`После фильтра (≥${MIN_SCORE}): ${filtered.length} чанков\n`);
+    if (filtered.length === 0) {
+      console.log('Нет чанков выше порога — нет контекста для ответа.');
+    } else {
+      const context = filtered.map(r => `[${r.source}]\n${r.content}`).join('\n---\n');
+      const prompt = `Используй только следующий контекст для ответа на вопрос.\n\nКонтекст:\n\n${context}\n\nВопрос: ${question}`;
+      await streamAnswer([{ role: 'user', content: prompt }]);
+    }
   }
+  console.log(divider);
+}
 
-  const scores = results.map(r => r.score.toFixed(3)).join(', ');
-  console.log(`[RAG] Найдено ${results.length} фрагментов (similarity: ${scores})\n`);
+// ---------------------------------------------------------------------------
+// Один вопрос или автопрогон
+// ---------------------------------------------------------------------------
 
-  const context = results.map(r => r.content).join('\n---\n');
-  const augmentedQuestion = `Используй только следующий контекст для ответа на вопрос.\n\nКонтекст:\n\n${context}\n\nВопрос: ${question}`;
-
-  await streamAnswer([{ role: 'user', content: augmentedQuestion }]);
+if (singleQuestion) {
+  await runQuestion(singleQuestion);
+} else {
+  console.log(`\n${divider}`);
+  console.log(`${label}  АВТОПРОГОН — ${ALL_QUESTIONS.length} вопросов`);
+  console.log(divider);
+  for (let i = 0; i < ALL_QUESTIONS.length; i++) {
+    await runQuestion(ALL_QUESTIONS[i], i + 1, ALL_QUESTIONS.length);
+  }
+  console.log(`\nГотово.`);
 }

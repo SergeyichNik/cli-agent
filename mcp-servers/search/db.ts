@@ -51,6 +51,7 @@ export class SearchDB {
     mkdirSync(path.dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
+    this.db.pragma('busy_timeout = 10000'); // ждать до 10с если DB занята другим процессом
     this.migrate();
   }
 
@@ -92,7 +93,13 @@ export class SearchDB {
     this.db.prepare(`DELETE FROM chunks WHERE source IN (${placeholders})`).run(sources);
   }
 
-  search(queryEmbedding: Float32Array, topK: number, strategy?: string, source?: string): SearchResult[] {
+  search(
+    queryEmbedding: Float32Array,
+    topK: number,
+    strategy?: string,
+    source?: string,
+    minScore?: number,
+  ): SearchResult[] & { totalBeforeFilter?: number } {
     let sql = `SELECT id, source, title, section, strategy, chunk_index, content, embedding FROM chunks`;
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -114,7 +121,16 @@ export class SearchDB {
     });
 
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, topK);
+
+    const topResults = scored.slice(0, topK);
+
+    if (minScore !== undefined && minScore > 0) {
+      const filtered = topResults.filter(r => r.score >= minScore) as SearchResult[] & { totalBeforeFilter?: number };
+      filtered.totalBeforeFilter = topResults.length;
+      return filtered;
+    }
+
+    return topResults;
   }
 
   getStatus(): {
