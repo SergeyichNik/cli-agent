@@ -13,8 +13,7 @@
     "clean": "node --input-type=module --eval \"import{rmSync}from'node:fs';['dist'].forEach(d=>{rmSync(d,{recursive:true,force:true});console.log('Removed '+d)})\"",
     "clean:data": "node --input-type=module --eval \"import{rmSync}from'node:fs';rmSync('.agent/data',{recursive:true,force:true});console.log('Removed .agent/data')\"",
     "demo:index": "tsx demo/index-kb.ts",
-    "demo:rag": "tsx demo/rag-compare.ts --mode rag",
-    "demo:rag-rerank": "tsx demo/rag-compare.ts --mode rag-rerank",
+    "demo:rag": "tsx demo/rag-compare.ts",
     "demo:benchmark": "tsx demo/rag-benchmark.ts",
     "demo:benchmark:rag": "tsx demo/rag-benchmark.ts --mode rag",
     "demo:benchmark:rerank": "tsx demo/rag-benchmark.ts --mode rag-rerank"
