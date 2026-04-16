@@ -6,13 +6,14 @@
  *
  * Usage:
  *   tsx demo/rag-compare.ts "Кто CEO ОсьминогСофт?"   # один вопрос
- *   tsx demo/rag-compare.ts                            # автопрогон 10 вопросов
+ *   tsx demo/rag-compare.ts                            # автопрогон всех вопросов
  *
  * npm scripts:
  *   npm run demo:rag         -- "вопрос"
  */
 
 import path from 'path';
+import * as clack from '@clack/prompts';
 import { SearchDB } from '../mcp-servers/search/db.js';
 import { createProvider as createEmbeddingProvider, type EmbeddingConfig } from '../mcp-servers/search/embeddings.js';
 import { loadProjectConfig } from '../src/agent/config.js';
@@ -25,9 +26,32 @@ import type { Message } from '../src/providers/base.js';
 // Config
 // ---------------------------------------------------------------------------
 
-const TOP_K_BEFORE = 15;  // кандидаты до фильтрации
-const TOP_K_AFTER  = 5;   // финальный контекст после фильтрации
+const TOP_K_BEFORE = 15;   // кандидаты до фильтрации
+const TOP_K_AFTER  = 5;    // финальный контекст после фильтрации
 const MIN_SCORE    = 0.50; // порог отсечения
+
+// ---------------------------------------------------------------------------
+// ANSI colors
+// ---------------------------------------------------------------------------
+
+const c = {
+  reset:  '\x1b[0m',
+  bold:   '\x1b[1m',
+  dim:    '\x1b[2m',
+  green:  '\x1b[32m',
+  yellow: '\x1b[33m',
+  red:    '\x1b[31m',
+  cyan:   '\x1b[36m',
+  blue:   '\x1b[34m',
+  gray:   '\x1b[90m',
+  white:  '\x1b[97m',
+};
+
+function scoreColor(score: number): string {
+  if (score >= 0.70) return c.green;
+  if (score >= 0.50) return c.yellow;
+  return c.red;
+}
 
 // ---------------------------------------------------------------------------
 // Системный промпт: обязательные источники, цитаты, режим "не знаю"
@@ -103,12 +127,12 @@ const embProvider = createEmbeddingProvider({
 const db = new SearchDB(dbPath);
 
 if (db.getIndexedSources().length === 0) {
-  console.error('Индекс пуст. Сначала запусти: npm run demo:index');
+  clack.log.error('Индекс пуст. Сначала запусти: npm run demo:index');
   process.exit(1);
 }
 
 // ---------------------------------------------------------------------------
-// Stream LLM response with system prompt
+// Stream LLM response — spinner until first token, then raw stream
 // ---------------------------------------------------------------------------
 
 async function streamAnswer(question: string, context: string): Promise<void> {
@@ -116,38 +140,86 @@ async function streamAnswer(question: string, context: string): Promise<void> {
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: `Контекст:\n\n${context}\n\nВопрос: ${question}` },
   ];
-  for await (const chunk of llm.stream(messages, { temperature: 0.3 })) {
-    if (chunk.type === 'text') process.stdout.write(chunk.text);
+
+  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  let frameIdx = 0;
+  const spinInterval = setInterval(() => {
+    process.stdout.write(`\r${c.cyan}${frames[frameIdx++ % frames.length]}${c.reset} Генерирую ответ...`);
+  }, 80);
+
+  let firstToken = true;
+  let inSources = false;
+  let lineBuf = '';
+
+  function flushLine(line: string): void {
+    if (/^Источники:/.test(line)) {
+      inSources = true;
+      process.stdout.write(`\n${c.bold}${c.cyan}${line}${c.reset}\n`);
+    } else if (inSources && /^\[\d+\]/.test(line)) {
+      // [N] source § section — "цитата"
+      const colored = line
+        .replace(/^(\[\d+\])/, `${c.bold}${c.blue}$1${c.reset}`)
+        .replace(/(§[^—]*)/, `${c.dim}$1${c.reset}`)
+        .replace(/"([^"]*)"/, `${c.yellow}"$1"${c.reset}`);
+      process.stdout.write(colored + '\n');
+    } else {
+      process.stdout.write(line + '\n');
+    }
   }
-  process.stdout.write('\n');
+
+  for await (const chunk of llm.stream(messages, { temperature: 0.3 })) {
+    if (chunk.type === 'text') {
+      if (firstToken) {
+        clearInterval(spinInterval);
+        process.stdout.write('\r\x1b[K\n');
+        firstToken = false;
+      }
+      // построчная буферизация для подсветки источников
+      lineBuf += chunk.text;
+      const lines = lineBuf.split('\n');
+      lineBuf = lines.pop() ?? '';
+      for (const line of lines) flushLine(line);
+    }
+  }
+
+  if (firstToken) {
+    clearInterval(spinInterval);
+    process.stdout.write('\r\x1b[K');
+  } else {
+    if (lineBuf) flushLine(lineBuf);
+    process.stdout.write('\n');
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Обработка одного вопроса
 // ---------------------------------------------------------------------------
 
-const divider = '─'.repeat(60);
-
 async function runQuestion(question: string, idx?: number, total?: number): Promise<void> {
-  const header = idx !== undefined ? `[${idx}/${total}] ` : '';
-  console.log(`\n${divider}`);
-  console.log(`[ RAG + CITATIONS ]  ${header}${question}`);
-  console.log(divider);
+  const prefix = idx !== undefined ? `${c.gray}[${idx}/${total}]${c.reset} ` : '';
+  console.log(`\n${c.bold}${c.cyan}?${c.reset} ${prefix}${c.white}${c.bold}${question}${c.reset}`);
 
+  // Эмбеддинг с spinner
+  const embedSpin = clack.spinner();
+  embedSpin.start('Ищу в индексе...');
   const [queryEmbedding] = await embProvider.embed([question]);
-
   const allResults = db.search(new Float32Array(queryEmbedding), TOP_K_BEFORE);
   const filtered = allResults.filter(r => r.score >= MIN_SCORE).slice(0, TOP_K_AFTER);
+  embedSpin.stop(`Найдено ${c.bold}${filtered.length}${c.reset} релевантных чанков из ${allResults.length} кандидатов`);
 
-  const topScores = allResults.slice(0, 5).map(r => `${r.source} ${r.score.toFixed(3)}`).join('\n  ');
-  console.log(`Кандидатов: ${allResults.length}`);
-  console.log(`  ${topScores}`);
-  console.log(`После фильтра (≥${MIN_SCORE}): ${filtered.length} чанков\n`);
+  // Метаданные чанков
+  const scoreLines = allResults.slice(0, 5).map(r => {
+    const col = scoreColor(r.score);
+    const parts = r.source.replace(/^demo\/kb\//, '').split('/');
+    const name = parts.length >= 2 ? `${parts[parts.length - 2]}/${parts[parts.length - 1]}` : r.source;
+    const passed = r.score >= MIN_SCORE ? '' : ` ${c.gray}(отфильтрован)${c.reset}`;
+    return `  ${col}${r.score.toFixed(3)}${c.reset}  ${c.dim}${name}${c.reset}${passed}`;
+  });
+  clack.note(scoreLines.join('\n'), 'Топ-5 по релевантности');
 
   // Уровень 1: нет чанков — не вызываем LLM
   if (filtered.length === 0) {
-    console.log('Не знаю. Нет релевантного контекста — уточните вопрос.');
-    console.log(divider);
+    clack.log.warn('Не знаю. Нет релевантного контекста — уточните вопрос.');
     return;
   }
 
@@ -161,7 +233,6 @@ async function runQuestion(question: string, idx?: number, total?: number): Prom
 
   // Уровень 2: LLM сам решает "не знаю" если контекст не содержит ответа
   await streamAnswer(question, context);
-  console.log(divider);
 }
 
 // ---------------------------------------------------------------------------
@@ -169,13 +240,13 @@ async function runQuestion(question: string, idx?: number, total?: number): Prom
 // ---------------------------------------------------------------------------
 
 if (singleQuestion) {
+  clack.intro('RAG + Citations');
   await runQuestion(singleQuestion);
+  clack.outro('Готово.');
 } else {
-  console.log(`\n${divider}`);
-  console.log(`[ RAG + CITATIONS ]  АВТОПРОГОН — ${ALL_QUESTIONS.length} вопросов`);
-  console.log(divider);
+  clack.intro(`RAG + Citations — автопрогон ${ALL_QUESTIONS.length} вопросов`);
   for (let i = 0; i < ALL_QUESTIONS.length; i++) {
     await runQuestion(ALL_QUESTIONS[i], i + 1, ALL_QUESTIONS.length);
   }
-  console.log(`\nГотово.`);
+  clack.outro('Готово.');
 }
