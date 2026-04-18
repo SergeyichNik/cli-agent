@@ -16,7 +16,9 @@
     "demo:rag": "tsx demo/rag-compare.ts",
     "demo:benchmark": "tsx demo/rag-benchmark.ts",
     "demo:benchmark:rag": "tsx demo/rag-benchmark.ts --mode rag",
-    "demo:benchmark:rerank": "tsx demo/rag-benchmark.ts --mode rag-rerank"
+    "demo:benchmark:rerank": "tsx demo/rag-benchmark.ts --mode rag-rerank",
+    "demo:chat": "tsx demo/rag-chat.ts",
+    "demo:chat:scenario": "tsx demo/rag-chat.ts --scenario"
   },
   "repository": {
     "type": "git",
