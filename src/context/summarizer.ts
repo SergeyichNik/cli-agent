@@ -7,11 +7,15 @@ export async function summarizeIfNeeded(
   wm: WorkingMemory,
   ltm: LongTermMemory,
   sessionId: string,
+  localMode = false,
 ): Promise<void> {
   if (!wm.isFull()) return;
 
   const oldest = wm.popOldestHalf();
   if (oldest.length === 0) return;
+
+  // Local models: skip LLM summarization to avoid adding another call under memory pressure
+  if (localMode) return;
 
   const messages: Message[] = [
     {

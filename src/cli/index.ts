@@ -126,9 +126,11 @@ async function main(): Promise<void> {
     model: projectConfig.model,
     apiKey: apiKey ?? '',
     contextWindowTokens: projectConfig.contextWindowTokens,
+    compactPrompt: projectConfig.compactPrompt,
     invariants: projectConfig.invariants,
     maxToolDepth: projectConfig.maxToolDepth,
     maxToolRetries: projectConfig.maxToolRetries,
+    maxOutputTokens: projectConfig.maxOutputTokens,
     mcpServers: allMcpServers,
   };
 

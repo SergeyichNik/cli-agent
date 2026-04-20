@@ -30,7 +30,7 @@ export async function* streamWithRetry(
         messages: messages as OpenAI.Chat.ChatCompletionMessageParam[],
         stream: true,
         stream_options: { include_usage: true },
-        tools: options.tools,
+        tools: options.tools?.length ? options.tools : undefined,
         temperature: options.temperature ?? 0.7,
         max_tokens: options.maxTokens,
       });

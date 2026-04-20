@@ -8,8 +8,10 @@ export const ProjectConfigSchema = z.object({
   preferredLanguage: z.string().default('English'),
   responseStyle: z.enum(['concise', 'detailed']).default('concise'),
   contextWindowTokens: z.number().default(32000),
+  compactPrompt: z.boolean().default(false),
   maxToolDepth: z.number().default(30),
   maxToolRetries: z.number().default(3),
+  maxOutputTokens: z.number().optional(),
   invariants: z.array(z.string()).default([]),
   // Only user-defined additional MCP servers. Built-in servers (files, linear) are auto-registered.
   mcpServers: z.record(z.string(), z.string()).default({}),

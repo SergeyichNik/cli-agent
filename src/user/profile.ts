@@ -11,9 +11,11 @@ export const UserConfigSchema = z.object({
   model: z.string().default('local-model'),
   apiKey: z.string().optional(),
   contextWindowTokens: z.number().default(32000),
+  compactPrompt: z.boolean().default(false),
   invariants: z.array(z.string()).default([]),
   maxToolDepth: z.number().default(10),
   maxToolRetries: z.number().default(3),
+  maxOutputTokens: z.number().optional(),
   mcpServers: z.record(z.string(), z.string()).default({
     files: 'tsx mcp-servers/files/index.ts',
   }),

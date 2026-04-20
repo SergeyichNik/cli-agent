@@ -39,7 +39,7 @@ export interface AgentTurnResult {
 export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promise<AgentTurnResult> {
   const { provider, wm, ltm, sm, tools, config, renderer, sessionId } = deps;
 
-  const systemPrompt = buildSystemPrompt(config, ltm, sessionId, sm.taskMachine.state, sm.taskMachine.task, tools.sandboxDir);
+  const systemPrompt = buildSystemPrompt(config, ltm, sessionId, sm.taskMachine.state, sm.taskMachine.task, tools.sandboxDir, config.compactPrompt);
   const messages = buildContext(userMessage, systemPrompt, wm, ltm, sm.taskMachine.task, sm.taskMachine.state);
 
   // Add user message to WM
@@ -67,8 +67,9 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
     const pendingToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
 
     for await (const chunk of provider.stream(messages, {
-      tools: tools.listForLLM(),
+      tools: config.provider === 'lmstudio' ? [] : tools.listForLLM(),
       temperature: 0.7,
+      maxTokens: config.maxOutputTokens,
     })) {
       if (chunk.type === 'text') {
         renderer.onToken(chunk.text);
@@ -428,7 +429,7 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
   extractAndSaveFactsAsync(provider, [...messages], ltm, sessionId);
 
   // Summarize if WM is full
-  await summarizeIfNeeded(provider, wm, ltm, sessionId);
+  await summarizeIfNeeded(provider, wm, ltm, sessionId, config.provider === 'lmstudio');
 
   const autoContinue = hitDepthLimit && (sm.taskMachine.state === 'execution' || sm.taskMachine.state === 'validation');
   const stats: BottomBarStats = {

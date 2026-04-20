@@ -88,6 +88,15 @@ The task is paused. Wait for the user to resume before taking any action.
   }
 }
 
+function buildLocalSystemPrompt(config: UserConfig, sandboxDir: string): string {
+  return [
+    `You are a helpful coding assistant.`,
+    `Respond in: ${config.preferredLanguage ?? 'English'}`,
+    `Style: ${config.responseStyle ?? 'concise'}`,
+    sandboxDir ? `Working directory: ${sandboxDir}` : '',
+  ].filter(Boolean).join('\n');
+}
+
 export function buildSystemPrompt(
   config: UserConfig,
   ltm: LongTermMemory,
@@ -95,7 +104,9 @@ export function buildSystemPrompt(
   taskState: TaskState = 'planning',
   task: Task | null = null,
   sandboxDir = '',
+  compact = false,
 ): string {
+  if (config.provider === 'lmstudio') return buildLocalSystemPrompt(config, sandboxDir);
   const facts = ltm.getFactsBySession(sessionId);
   const factLines = facts.map((f) => `- ${f.key}: ${f.value}`).join('\n');
 
@@ -110,12 +121,16 @@ export function buildSystemPrompt(
   const BUILTIN_SERVERS = new Set(['files', 'git', 'search']);
   const externalMcpNames = Object.keys(mcpServers).filter((s) => !BUILTIN_SERVERS.has(s));
   const mcpBlock = externalMcpNames.length > 0
-    ? `\n## Available External Integrations (MCP)\nYou have access to real external services via MCP tools.\n\n### CRITICAL: When to use MCP tools vs local tools\n\n**Scenario A — user asks to CREATE/LIST/UPDATE things IN an external service:**\n> "create Linear tasks for MVP", "add issues to GitHub", "show my Linear backlog"\n→ The ENTIRE plan must be MCP tool calls only. Do NOT create local files. Do NOT build anything locally. Every execution step = a call to the external service's MCP tool.\n\n**Scenario B — user asks to BUILD something and track it:**\n> "build a todo app and create Linear tasks to track it"\n→ Plan can mix local steps AND MCP steps.\n\nIf the user's request mentions an external service name (${externalMcpNames.join(', ')}) as the destination, treat it as Scenario A.\n\nAvailable services:\n${externalMcpNames.map((name) => `- **${name}**: \`${name}__list_teams\` (get team UUID first!), \`${name}__create_issue\`, \`${name}__list_issues\`, \`${name}__update_issue\`. Always call \`${name}__list_teams\` before \`${name}__create_issue\` to get the required UUID.`).join('\n')}\n`
+    ? compact
+      ? `\n## External MCP integrations: ${externalMcpNames.join(', ')}\nIf user asks to manage items IN these services, use only MCP tools (no local files). Get team/project UUID first.\n${externalMcpNames.map((name) => `- ${name}: ${name}__list_teams, ${name}__create_issue, ${name}__list_issues, ${name}__update_issue`).join('\n')}\n`
+      : `\n## Available External Integrations (MCP)\nYou have access to real external services via MCP tools.\n\n### CRITICAL: When to use MCP tools vs local tools\n\n**Scenario A — user asks to CREATE/LIST/UPDATE things IN an external service:**\n> "create Linear tasks for MVP", "add issues to GitHub", "show my Linear backlog"\n→ The ENTIRE plan must be MCP tool calls only. Do NOT create local files. Do NOT build anything locally. Every execution step = a call to the external service's MCP tool.\n\n**Scenario B — user asks to BUILD something and track it:**\n> "build a todo app and create Linear tasks to track it"\n→ Plan can mix local steps AND MCP steps.\n\nIf the user's request mentions an external service name (${externalMcpNames.join(', ')}) as the destination, treat it as Scenario A.\n\nAvailable services:\n${externalMcpNames.map((name) => `- **${name}**: \`${name}__list_teams\` (get team UUID first!), \`${name}__create_issue\`, \`${name}__list_issues\`, \`${name}__update_issue\`. Always call \`${name}__list_teams\` before \`${name}__create_issue\` to get the required UUID.`).join('\n')}\n`
     : '';
 
   const hasSearch = 'search' in mcpServers;
   const searchBlock = hasSearch
-    ? `\n## Search Index (semantic search over project files)\nYou have a local vector search index. Use it to find relevant code/docs before reading files manually.\n\n**Workflow:**\n1. At the START of a session (or when asked about code you haven't seen), call \`search__index_status\` to check if the index is populated.\n2. If the index is empty and the user asks about code, suggest running \`search__index_documents\` first.\n3. Before reading a file to answer a question, try \`search__search\` first — it's faster.\n\n**Tools:**\n- \`search__index_documents(glob, strategy)\` — index files. Use \`strategy: "both"\` to compare chunking strategies.\n- \`search__search(query, topK?, strategy?, source?)\` — semantic search, returns top-K chunks with scores.\n- \`search__index_status()\` — show index stats (chunk counts, last indexed time).\n- \`search__reindex(glob?)\` — delete and re-index files after changes.\n\n**Indexing — always use broad globs, never per-file:**\n- CORRECT: one call with \`glob: "**/*.ts"\` indexes all TypeScript files in one batch\n- WRONG: calling \`index_documents\` once per file — extremely slow, never do this\n- For mixed projects, use 2 calls max: one for code (\`**/*.ts\`), one for docs (\`**/*.md\`)\n- Auto-excluded (no need to filter manually): node_modules, dist, build, .git, .agent, .cache, coverage, vendor, *.d.ts\n\n**When to use:**\n- User asks "where is X implemented?" → search before reading files\n- User asks "how does Y work?" → search for relevant chunks\n- User asks to index/search docs explicitly → do it directly\n`
+    ? compact
+      ? `\n## Search Index\nTools: search__index_status, search__index_documents(glob), search__search(query), search__reindex. Use broad globs (e.g. "**/*.ts"), not per-file calls.\n`
+      : `\n## Search Index (semantic search over project files)\nYou have a local vector search index. Use it to find relevant code/docs before reading files manually.\n\n**Workflow:**\n1. At the START of a session (or when asked about code you haven't seen), call \`search__index_status\` to check if the index is populated.\n2. If the index is empty and the user asks about code, suggest running \`search__index_documents\` first.\n3. Before reading a file to answer a question, try \`search__search\` first — it's faster.\n\n**Tools:**\n- \`search__index_documents(glob, strategy)\` — index files. Use \`strategy: "both"\` to compare chunking strategies.\n- \`search__search(query, topK?, strategy?, source?)\` — semantic search, returns top-K chunks with scores.\n- \`search__index_status()\` — show index stats (chunk counts, last indexed time).\n- \`search__reindex(glob?)\` — delete and re-index files after changes.\n\n**Indexing — always use broad globs, never per-file:**\n- CORRECT: one call with \`glob: "**/*.ts"\` indexes all TypeScript files in one batch\n- WRONG: calling \`index_documents\` once per file — extremely slow, never do this\n- For mixed projects, use 2 calls max: one for code (\`**/*.ts\`), one for docs (\`**/*.md\`)\n- Auto-excluded (no need to filter manually): node_modules, dist, build, .git, .agent, .cache, coverage, vendor, *.d.ts\n\n**When to use:**\n- User asks "where is X implemented?" → search before reading files\n- User asks "how does Y work?" → search for relevant chunks\n- User asks to index/search docs explicitly → do it directly\n`
     : '';
 
   const cwdBlock = sandboxDir
