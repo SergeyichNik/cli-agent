@@ -19,7 +19,9 @@
     "demo:benchmark:rerank": "tsx demo/rag-benchmark.ts --mode rag-rerank",
     "demo:chat": "tsx demo/rag-chat.ts",
     "demo:chat:scenario": "tsx demo/rag-chat.ts --scenario",
-    "demo:day28": "tsx demo/rag-day28.ts"
+    "demo:day28": "tsx demo/rag-day28.ts",
+    "demo:day29": "tsx demo/code-review-day29.ts",
+    "demo:day29:full": "tsx demo/code-review-day29.ts --full"
   },
   "repository": {
     "type": "git",
