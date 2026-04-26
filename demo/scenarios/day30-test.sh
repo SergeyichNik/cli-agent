@@ -6,18 +6,37 @@ VPS_IP="147.45.100.155"
 API_KEY="llm12345"
 BASE_URL="http://$VPS_IP"
 
-echo "╔════════════════════════════════════════╗"
-echo "║     Day 30 — LLM Service Demo Test     ║"
-echo "╚════════════════════════════════════════╝"
+GRAY="\033[90m"
+CYAN="\033[36m"
+GREEN="\033[32m"
+YELLOW="\033[33m"
+RED="\033[31m"
+BOLD="\033[1m"
+RESET="\033[0m"
+
+print_request() {
+  echo -e "${GRAY}▶ запрос:${RESET}"
+  echo -e "${CYAN}$1${RESET}"
+  echo -e "${GRAY}▶ ответ:${RESET}"
+}
+
+echo ""
+echo -e "${BOLD}╔════════════════════════════════════════╗${RESET}"
+echo -e "${BOLD}║     Day 30 — LLM Service Demo Test     ║${RESET}"
+echo -e "${BOLD}╚════════════════════════════════════════╝${RESET}"
 echo ""
 
 # ── 1. Health ─────────────────────────────────────────────────────────────────
-echo "━━━ 1. Доступ к сервису по сети ━━━"
+echo -e "${BOLD}━━━ 1. Доступ к сервису по сети ━━━${RESET}"
+print_request "curl $BASE_URL/health"
 curl -s "$BASE_URL/health" | python3 -m json.tool
 echo ""
 
 # ── 2. Одиночный запрос ───────────────────────────────────────────────────────
-echo "━━━ 2. Одиночный API запрос ━━━"
+echo -e "${BOLD}━━━ 2. Одиночный API запрос ━━━${RESET}"
+print_request "curl -X POST $BASE_URL/v1/chat/completions \\
+  -H \"Authorization: Bearer $API_KEY\" \\
+  -d '{\"messages\":[{\"role\":\"user\",\"content\":\"Напиши hello world на Python\"}]}'"
 curl -s -X POST "$BASE_URL/v1/chat/completions" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
@@ -26,7 +45,8 @@ curl -s -X POST "$BASE_URL/v1/chat/completions" \
 echo ""
 
 # ── 3. Стабильность — 5 параллельных запросов ─────────────────────────────────
-echo "━━━ 3. Стабильность — 5 параллельных запросов ━━━"
+echo -e "${BOLD}━━━ 3. Стабильность — 5 параллельных запросов ━━━${RESET}"
+print_request "for i in {1..5}; do curl -X POST $BASE_URL/v1/chat/completions ... & done"
 for i in {1..5}; do
   BODY="{\"messages\":[{\"role\":\"user\",\"content\":\"Вопрос $i: что такое рекурсия?\"}],\"stream\":false}"
   (
@@ -34,30 +54,33 @@ for i in {1..5}; do
       -H "Authorization: Bearer $API_KEY" \
       -H "Content-Type: application/json" \
       -d "$BODY")
-    echo "  запрос $i: $CODE"
+    echo -e "  запрос $i: ${GREEN}$CODE OK${RESET}"
   ) &
 done
 wait
-echo "  Все 5 запросов завершены"
+echo -e "  ${GREEN}✓ все 5 запросов завершены${RESET}"
 echo ""
 
 # ── 4. Rate limit ─────────────────────────────────────────────────────────────
-echo "━━━ 4. Rate limit (10 req/min — 11-й должен получить 429) ━━━"
+echo -e "${BOLD}━━━ 4. Rate limit — 10 req/min, 11-й получает 429 ━━━${RESET}"
+print_request "for i in {1..11}; do curl -X POST $BASE_URL/v1/chat/completions ... ; done"
 for i in {1..11}; do
   CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/v1/chat/completions" \
     -H "Authorization: Bearer $API_KEY" \
     -H "Content-Type: application/json" \
     -d '{"messages":[{"role":"user","content":"hi"}],"stream":false}')
   if [ "$CODE" = "429" ]; then
-    echo "  req $i: $CODE ← rate limit сработал"
+    echo -e "  req $i: ${RED}$CODE — Too Many Requests ← rate limit сработал${RESET}"
   else
-    echo "  req $i: $CODE"
+    echo -e "  req $i: ${GREEN}$CODE${RESET}"
   fi
 done
 echo ""
 
 # ── 5. Max context ────────────────────────────────────────────────────────────
-echo "━━━ 5. Max context (9000 символов — должен вернуть 400) ━━━"
+echo -e "${BOLD}━━━ 5. Max context — 9000 символов, лимит 8000 ━━━${RESET}"
+print_request "curl -X POST $BASE_URL/v1/chat/completions \\
+  -d '{\"messages\":[{\"role\":\"user\",\"content\":\"<9000 символов>\"}]}'"
 BIG=$(python3 -c "print('x'*9000)")
 BODY="{\"messages\":[{\"role\":\"user\",\"content\":\"$BIG\"}],\"stream\":false}"
 curl -s -X POST "$BASE_URL/v1/chat/completions" \
@@ -66,5 +89,6 @@ curl -s -X POST "$BASE_URL/v1/chat/completions" \
   -d "$BODY" | python3 -m json.tool
 echo ""
 
-echo "✓ Демонстрация завершена"
-echo "  Чат в браузере: open $BASE_URL/"
+echo -e "${GREEN}${BOLD}✓ Демонстрация завершена${RESET}"
+echo -e "  Чат в браузере: ${CYAN}open $BASE_URL/${RESET}"
+echo ""
