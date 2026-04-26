@@ -113,6 +113,10 @@ sudo systemctl restart sshd
 ```bash
 git clone https://github.com/SergeyichNik/cli-agent.git
 cd cli-agent
+
+# Переключись на ветку с Day 30
+git checkout feat/day29-code-review-benchmark
+
 npm install
 ```
 
