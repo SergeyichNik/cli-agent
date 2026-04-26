@@ -284,6 +284,57 @@ open http://VPS_IP/
 
 ---
 
+## Фаза 11 — Остановка после демо
+
+### VPS
+
+```bash
+ssh llm@VPS_IP
+
+# Подключись к сессии и останови сервис
+screen -r llm-service
+# Ctrl+C — остановить Node.js сервис
+
+# Выйди из screen
+exit
+
+# Убери все screen сессии
+screen -wipe
+
+# Останови nginx (опционально)
+sudo systemctl stop nginx
+```
+
+### Домашняя машина
+
+```bash
+# Останови SSH туннель
+launchctl stop com.llm.tunnel
+launchctl unload ~/Library/LaunchAgents/com.llm.tunnel.plist
+
+# Проверь что туннель остановлен
+launchctl list | grep llm
+# com.llm.tunnel не должен появиться
+
+# Останови LM Studio — закрой приложение или:
+pkill -f "LM Studio"
+```
+
+### Сменить API ключ после демо (если светил в видео)
+
+```bash
+ssh llm@VPS_IP
+screen -r llm-service
+# Ctrl+C
+
+API_KEY=новый_ключ \
+LM_STUDIO_URL=http://localhost:1234 \
+MODEL="qwen2.5-coder-7b-instruct-mlx" \
+npm run demo:day30
+```
+
+---
+
 ## Диагностика
 
 | Проблема | Что проверить |
