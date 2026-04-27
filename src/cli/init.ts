@@ -71,7 +71,7 @@ export async function runInit(cwd: string): Promise<void> {
     apiKey = key;
   }
 
-  const defaultModel = provider === 'deepseek' ? 'deepseek-chat' : 'local-model';
+  const defaultModel = provider === 'deepseek' ? 'deepseek-v4-flash' : 'local-model';
   const model = await p.text({
     message: 'Model name:',
     defaultValue: defaultModel,

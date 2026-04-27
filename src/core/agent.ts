@@ -64,6 +64,7 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
   // Agentic loop: continue until done or depth exceeded
   while (depth < maxDepth) {
     let text = '';
+    let reasoning = '';
     const pendingToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
 
     for await (const chunk of provider.stream(messages, {
@@ -71,7 +72,9 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
       temperature: 0.7,
       maxTokens: config.maxOutputTokens,
     })) {
-      if (chunk.type === 'text') {
+      if (chunk.type === 'reasoning') {
+        reasoning += chunk.text;
+      } else if (chunk.type === 'text') {
         renderer.onToken(chunk.text);
         text += chunk.text;
       } else if (chunk.type === 'tool_call') {
@@ -101,12 +104,13 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
       messages.push({
         role: 'assistant',
         content: text || null,
+        ...(reasoning ? { reasoning_content: reasoning } : {}),
         tool_calls: pendingToolCalls.map((tc) => ({
           id: tc.id,
           type: 'function',
           function: { name: tc.name, arguments: tc.arguments },
         })),
-      });
+      } as Message);
       for (const tc of pendingToolCalls) {
         messages.push({
           role: 'tool',
@@ -143,12 +147,13 @@ export async function runAgentTurn(userMessage: string, deps: AgentDeps): Promis
     messages.push({
       role: 'assistant',
       content: text || null,
+      ...(reasoning ? { reasoning_content: reasoning } : {}),
       tool_calls: pendingToolCalls.map((tc) => ({
         id: tc.id,
         type: 'function',
         function: { name: tc.name, arguments: tc.arguments },
       })),
-    });
+    } as Message);
 
     for (const tc of pendingToolCalls) {
       renderer.showToolCall(tc.name, tc.arguments);

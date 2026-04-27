@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 export const ProjectConfigSchema = z.object({
   provider: z.enum(['deepseek', 'lmstudio']).default('deepseek'),
-  model: z.string().default('deepseek-chat'),
+  model: z.string().default('deepseek-v4-flash'),
   preferredLanguage: z.string().default('English'),
   responseStyle: z.enum(['concise', 'detailed']).default('concise'),
   contextWindowTokens: z.number().default(32000),

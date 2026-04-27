@@ -62,9 +62,9 @@ export function chunkFixed(text: string): RawChunk[] {
 
 const STRUCTURAL_WARN_TOKENS = 1500;
 
-// nomic-embed-text uses BERT-like tokenizer which produces ~1.5-2x more tokens than cl100k for code.
-// 1200 cl100k ≈ 1800-2400 nomic tokens — safely within the 2048 default context.
-const MAX_EMBED_TOKENS = 1200;
+// Conservative limit safe for 512-context models (mxbai-embed-large).
+// For nomic-embed-text (2048 ctx) you can raise this in config.
+const MAX_EMBED_TOKENS = 400;
 
 export function truncateToTokens(text: string, maxTokens = MAX_EMBED_TOKENS): string {
   const tokens = enc.encode(text);

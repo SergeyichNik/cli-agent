@@ -206,16 +206,16 @@ const server = new McpServer({ name: 'search', version: '1.0.0' });
 server.registerTool('index_documents', {
   description:
     'Index files from the sandbox into the vector search database. Supports glob patterns ' +
-    'like "**/*.ts", "**/*.md", "src/**/*.ts". Use strategy "both" to index with both chunking ' +
-    'strategies and see a comparison.',
+    'like "**/*.ts", "**/*.md", "src/**/*.ts". Default strategy is "structural" (by headings for ' +
+    '.md, by top-level exports for .ts) — use "fixed" only for files without clear structure.',
   inputSchema: {
     glob: z.string().describe('Glob pattern for files to index (e.g. "**/*.ts", "**/*.md")'),
     strategy: z
       .enum(['fixed', 'structural', 'both'])
-      .default('both')
+      .default('structural')
       .describe(
-        'Chunking strategy: "fixed" = 512-token sliding window, ' +
-        '"structural" = by headings/exports, "both" = index with both and compare',
+        'Chunking strategy: "structural" = by headings/.md or exports/.ts (default, best quality), ' +
+        '"fixed" = 512-token sliding window (fallback for unstructured files)',
       ),
   },
 }, async ({ glob, strategy }) => {

@@ -360,9 +360,18 @@ async function main(): Promise<void> {
         return;
       }
 
+      if (message.startsWith('/help ')) {
+        const query = message.slice(6).trim();
+        await handleTurn(
+          `[/help] ${query}\n\nUse search__search tool to find relevant documentation in docs/ and README.md, then answer this question about the project.`,
+        );
+        return;
+      }
+
       if (message === '/help') {
         console.log('Commands:');
         console.log('  /help                  Show this help');
+        console.log('  /help <question>       Ask the agent about the project (uses RAG over docs/)');
         console.log('  /state                 Show current task state and plan progress');
         console.log('  /facts                 Show session facts');
         console.log('  /invariants            Show all invariants (global + session)');
