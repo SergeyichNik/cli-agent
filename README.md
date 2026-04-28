@@ -28,4 +28,15 @@ agent init      # initialize agent in current folder
 agent           # start agent session
 agent --provider deepseek   # use DeepSeek
 agent --provider lmstudio   # use local LM Studio
+agent review-pr --repo owner/repo --pr 42  # AI code review of a PR
 ```
+
+## AI Code Review
+
+Automated PR review via GitHub Actions. On every pull request, the agent:
+- fetches the diff and changed files from GitHub
+- reads the local file contents for context
+- generates a structured review (bugs / architecture / recommendations) via DeepSeek
+- posts the review as a PR comment
+
+Requires `DEEPSEEK_API_KEY` in repository secrets. `GITHUB_TOKEN` is provided automatically.
