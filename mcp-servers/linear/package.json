@@ -1,0 +1,6 @@
+{
+  "name": "mcp-server-linear",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "MCP Linear API server for cli-agent"
+}

@@ -10,10 +10,15 @@ export const UserConfigSchema = z.object({
   provider: z.enum(['deepseek', 'lmstudio']).default('lmstudio'),
   model: z.string().default('local-model'),
   apiKey: z.string().optional(),
-  contextWindowTokens: z.number().default(4000),
+  contextWindowTokens: z.number().default(32000),
+  compactPrompt: z.boolean().default(false),
   invariants: z.array(z.string()).default([]),
   maxToolDepth: z.number().default(10),
   maxToolRetries: z.number().default(3),
+  maxOutputTokens: z.number().optional(),
+  mcpServers: z.record(z.string(), z.string()).default({
+    files: 'tsx mcp-servers/files/index.ts',
+  }),
 });
 
 export type UserConfig = z.infer<typeof UserConfigSchema>;
@@ -68,7 +73,16 @@ export function loadConfig(userName: string): UserConfig {
   const globalRaw = readJsonSafe(GLOBAL_CONFIG_PATH);
   const userRaw = readJsonSafe(getUserConfigPath(userName));
   const merged = deepMerge(globalRaw, { ...userRaw, userName });
-  return UserConfigSchema.parse(merged);
+  const parsed = UserConfigSchema.parse(merged);
+
+  // Persist any new fields (filled by zod defaults) back to the user config file
+  const newKeys = (Object.keys(parsed) as (keyof UserConfig)[]).filter((k) => !(k in userRaw));
+  if (newKeys.length > 0) {
+    const patch = Object.fromEntries(newKeys.map((k) => [k, parsed[k]]));
+    saveConfig(userName, patch);
+  }
+
+  return parsed;
 }
 
 export function saveConfig(userName: string, config: Partial<UserConfig>): void {

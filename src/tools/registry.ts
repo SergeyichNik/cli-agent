@@ -31,4 +31,8 @@ export class ToolRegistry {
   isDestructive(name: string): boolean {
     return this.tools.get(name)?.requiresConfirmation ?? false;
   }
+
+  list(): Tool[] {
+    return [...this.tools.values()];
+  }
 }

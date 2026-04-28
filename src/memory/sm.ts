@@ -1,12 +1,10 @@
 import type { Message } from '../providers/base.js';
-
-export type TaskState = 'IDLE' | 'PLANNING' | 'EXECUTING' | 'PAUSED' | 'VALIDATION' | 'DONE' | 'ERROR';
+import { TaskStateMachine } from '../core/task-state.js';
 
 export class SessionMemory {
   readonly sessionId: string;
   messages: Message[] = [];
-  taskState: TaskState = 'IDLE';
-  currentTask: string | null = null;
+  taskMachine: TaskStateMachine = new TaskStateMachine();
   consecutiveToolErrors = 0;
 
   constructor(sessionId: string) {

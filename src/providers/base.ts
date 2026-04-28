@@ -25,7 +25,12 @@ export interface UsageChunk {
   output_tokens: number;
 }
 
-export type Chunk = TextChunk | ToolCallChunk | DoneChunk | UsageChunk;
+export interface ReasoningChunk {
+  type: 'reasoning';
+  text: string;
+}
+
+export type Chunk = TextChunk | ToolCallChunk | DoneChunk | UsageChunk | ReasoningChunk;
 
 export interface LLMOptions {
   tools?: ChatCompletionTool[];

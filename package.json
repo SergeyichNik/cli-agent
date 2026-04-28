@@ -1,17 +1,30 @@
 {
-  "name": "cli-agent",
+  "name": "agent",
   "version": "1.0.0",
   "description": "CLI Code Assistant Agent with long-term memory and agentic tool execution",
   "type": "module",
   "bin": {
-    "cli-agent": "./src/cli/index.ts"
+    "agent": "./dist/cli/index.js"
   },
   "scripts": {
-    "start": "tsx src/cli/index.ts",
-    "dev": "tsx watch src/cli/index.ts",
-    "build": "tsc",
-    "clean": "node --input-type=module --eval \"import{rmSync}from'node:fs';['data','dist'].forEach(d=>{rmSync(d,{recursive:true,force:true});console.log('Removed '+d)})\"",
-    "clean:user": "tsx scripts/clean-user.ts"
+    "start": "node dist/cli/index.js",
+    "dev": "tsx src/cli/index.ts",
+    "build": "node --input-type=module --eval \"import{rmSync}from'node:fs';rmSync('dist',{recursive:true,force:true})\" && tsc && tsc -p tsconfig.mcp.json && chmod +x dist/cli/index.js",
+    "clean": "node --input-type=module --eval \"import{rmSync}from'node:fs';['dist'].forEach(d=>{rmSync(d,{recursive:true,force:true});console.log('Removed '+d)})\"",
+    "clean:data": "node --input-type=module --eval \"import{rmSync}from'node:fs';rmSync('.agent/data',{recursive:true,force:true});console.log('Removed .agent/data')\"",
+    "demo:index": "tsx demo/index-kb.ts",
+    "demo:rag": "tsx demo/rag-compare.ts",
+    "demo:benchmark": "tsx demo/rag-benchmark.ts",
+    "demo:benchmark:rag": "tsx demo/rag-benchmark.ts --mode rag",
+    "demo:benchmark:rerank": "tsx demo/rag-benchmark.ts --mode rag-rerank",
+    "demo:chat": "tsx demo/rag-chat.ts",
+    "demo:chat:scenario": "tsx demo/rag-chat.ts --scenario",
+    "demo:day28": "tsx demo/rag-day28.ts",
+    "demo:day29": "tsx demo/code-review-day29.ts",
+    "demo:day29:full": "tsx demo/code-review-day29.ts --full",
+    "demo:day30": "tsx demo/service-day30.ts",
+    "demo:day31": "tsx demo/dev-assistant-day31.ts",
+    "demo:day32": "tsx demo/pr-review-day32.ts"
   },
   "repository": {
     "type": "git",
@@ -26,8 +39,11 @@
   "homepage": "https://github.com/SergeyichNik/cli-agent#readme",
   "dependencies": {
     "@clack/prompts": "^0.9.1",
+    "@hono/node-server": "^2.0.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^12.8.0",
     "commander": "^12.1.0",
+    "hono": "^4.12.15",
     "marked": "^12.0.0",
     "marked-terminal": "^7.1.0",
     "openai": "^4.52.0",

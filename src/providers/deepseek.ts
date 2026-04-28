@@ -5,7 +5,7 @@ export class DeepSeekProvider implements LLMProvider {
   private client: OpenAI;
   private model: string;
 
-  constructor(apiKey: string, model = 'deepseek-chat', baseURL = 'https://api.deepseek.com') {
+  constructor(apiKey: string, model = 'deepseek-v4-flash', baseURL = 'https://api.deepseek.com') {
     this.client = new OpenAI({ baseURL, apiKey });
     this.model = model;
   }
@@ -30,7 +30,7 @@ export async function* streamWithRetry(
         messages: messages as OpenAI.Chat.ChatCompletionMessageParam[],
         stream: true,
         stream_options: { include_usage: true },
-        tools: options.tools,
+        tools: options.tools?.length ? options.tools : undefined,
         temperature: options.temperature ?? 0.7,
         max_tokens: options.maxTokens,
       });
@@ -52,6 +52,11 @@ export async function* streamWithRetry(
         if (!choice) continue;
 
         const delta = choice.delta;
+
+        const reasoningContent = (delta as any).reasoning_content;
+        if (reasoningContent) {
+          yield { type: 'reasoning', text: reasoningContent };
+        }
 
         if (delta.content) {
           yield { type: 'text', text: delta.content };
