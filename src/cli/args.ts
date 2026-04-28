@@ -2,6 +2,7 @@ import { Command } from 'commander';
 
 export type ParsedArgs =
   | { subcommand: 'init' }
+  | { subcommand: 'review-pr'; repo: string; pr: number; debug: boolean }
   | {
       subcommand: null;
       provider: 'deepseek' | 'lmstudio' | undefined;
@@ -15,6 +16,25 @@ export function parseArgs(argv = process.argv): ParsedArgs {
 
   // Handle init subcommand manually before commander takes over
   if (argv[2] === 'init') return { subcommand: 'init' };
+
+  if (argv[2] === 'review-pr') {
+    const rest = argv.slice(3);
+    const repoIdx = rest.indexOf('--repo');
+    const prIdx = rest.indexOf('--pr');
+    const debugFlag = rest.includes('--debug') || rest.includes('-d');
+    const repo = repoIdx !== -1 ? rest[repoIdx + 1] : undefined;
+    const prStr = prIdx !== -1 ? rest[prIdx + 1] : undefined;
+    if (!repo || !prStr || !repo.includes('/')) {
+      console.error('Usage: agent review-pr --repo owner/repo --pr <number>');
+      process.exit(1);
+    }
+    const pr = parseInt(prStr, 10);
+    if (isNaN(pr) || pr <= 0) {
+      console.error(`Invalid PR number: ${prStr}`);
+      process.exit(1);
+    }
+    return { subcommand: 'review-pr', repo, pr, debug: debugFlag };
+  }
 
   program
     .name('agent')

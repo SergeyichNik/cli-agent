@@ -14,6 +14,7 @@ import { fileURLToPath } from 'url';
 import os from 'os';
 import { parseArgs } from './args.js';
 import { runInit } from './init.js';
+import { runReviewPr } from './review-pr.js';
 import { loadProjectConfig, getAgentDataDir, isAgentProject } from '../agent/config.js';
 import { loadSecrets } from '../agent/secrets.js';
 import { DeepSeekProvider } from '../providers/deepseek.js';
@@ -45,6 +46,12 @@ async function main(): Promise<void> {
   // Handle init subcommand
   if (parsedArgs.subcommand === 'init') {
     await runInit(process.cwd());
+    return;
+  }
+
+  // Handle review-pr subcommand
+  if (parsedArgs.subcommand === 'review-pr') {
+    await runReviewPr(parsedArgs.repo, parsedArgs.pr, parsedArgs.debug);
     return;
   }
 
@@ -107,11 +114,16 @@ async function main(): Promise<void> {
     files: `node ${path.join(packageRoot, 'dist/mcp-servers/files/index.js')}`,
     git: `node ${path.join(packageRoot, 'dist/mcp-servers/git/index.js')}`,
     search: `node ${path.join(packageRoot, 'dist/mcp-servers/search/index.js')}`,
+    github: `node ${path.join(packageRoot, 'dist/mcp-servers/github/index.js')}`,
   };
   const linearApiKey = secrets.linear?.apiKey ?? process.env.LINEAR_API_KEY;
   if (linearApiKey) {
     process.env.LINEAR_API_KEY = linearApiKey; // ensure MCP server receives it
     builtinMcpServers.linear = `node ${path.join(packageRoot, 'dist/mcp-servers/linear/index.js')}`;
+  }
+  const githubToken = secrets.github?.apiKey ?? process.env.GITHUB_TOKEN;
+  if (githubToken) {
+    process.env.GITHUB_TOKEN = githubToken; // ensure MCP server receives it
   }
 
   // Merge: built-in + user-defined from .agent/config.json

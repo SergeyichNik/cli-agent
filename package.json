@@ -23,7 +23,8 @@
     "demo:day29": "tsx demo/code-review-day29.ts",
     "demo:day29:full": "tsx demo/code-review-day29.ts --full",
     "demo:day30": "tsx demo/service-day30.ts",
-    "demo:day31": "tsx demo/dev-assistant-day31.ts"
+    "demo:day31": "tsx demo/dev-assistant-day31.ts",
+    "demo:day32": "tsx demo/pr-review-day32.ts"
   },
   "repository": {
     "type": "git",
