@@ -189,6 +189,90 @@ server.registerTool(
   },
 );
 
+// ── list_workflow_states ──────────────────────────────────────────────────────
+
+server.registerTool(
+  'list_workflow_states',
+  {
+    description: 'List workflow states for a Linear team. Returns state IDs needed for update_issue stateId.',
+    inputSchema: {
+      teamId: z.string().describe('Linear team ID'),
+    },
+  },
+  async ({ teamId }) => {
+    const query = `
+      query TeamStates($teamId: String!) {
+        team(id: $teamId) {
+          states { nodes { id name type } }
+        }
+      }
+    `;
+    const data = await linearQuery<{
+      team: { states: { nodes: Array<{ id: string; name: string; type: string }> } };
+    }>(query, { teamId });
+
+    const states = data.team.states.nodes;
+    if (!states.length) {
+      return { content: [{ type: 'text' as const, text: 'No workflow states found.' }] };
+    }
+
+    const lines = states.map((s) => `${s.name} (type: ${s.type})\n  stateId: ${s.id}`);
+    return { content: [{ type: 'text' as const, text: lines.join('\n\n') }] };
+  },
+);
+
+// ── get_issue ─────────────────────────────────────────────────────────────────
+
+server.registerTool(
+  'get_issue',
+  {
+    description: 'Get a single Linear issue by ID. Returns full details including description.',
+    inputSchema: {
+      issueId: z.string().describe('Linear issue ID (e.g. "abc123")'),
+    },
+  },
+  async ({ issueId }) => {
+    const query = `
+      query GetIssue($id: String!) {
+        issue(id: $id) {
+          id
+          title
+          description
+          priority
+          state { name }
+          assignee { name }
+          team { name }
+          url
+        }
+      }
+    `;
+
+    const data = await linearQuery<{
+      issue: {
+        id: string;
+        title: string;
+        description: string | null;
+        priority: number;
+        state: { name: string };
+        assignee: { name: string } | null;
+        team: { name: string };
+        url: string;
+      };
+    }>(query, { id: issueId });
+
+    const i = data.issue;
+    const PRIORITY_LABEL: Record<number, string> = { 0: 'No priority', 1: 'Urgent', 2: 'High', 3: 'Medium', 4: 'Low' };
+    const text = [
+      `[${i.id}] ${i.title}`,
+      `State: ${i.state.name} | Priority: ${PRIORITY_LABEL[i.priority] ?? i.priority} | Assignee: ${i.assignee?.name ?? '—'} | Team: ${i.team.name}`,
+      `URL: ${i.url}`,
+      i.description ? `\nDescription:\n${i.description}` : '',
+    ].filter(Boolean).join('\n');
+
+    return { content: [{ type: 'text' as const, text }] };
+  },
+);
+
 // ── update_issue ──────────────────────────────────────────────────────────────
 
 server.registerTool(
@@ -253,6 +337,69 @@ server.registerTool(
           text: `Updated: [${issue.id}] ${issue.title}\nState: ${issue.state.name} | Assignee: ${issue.assignee?.name ?? '—'}\nURL: ${issue.url}`,
         },
       ],
+    };
+  },
+);
+
+// ── list_comments ─────────────────────────────────────────────────────────────
+
+server.registerTool(
+  'list_comments',
+  {
+    description: 'List all comments on a Linear issue, ordered by creation time.',
+    inputSchema: {
+      issueId: z.string().describe('Linear issue ID'),
+    },
+  },
+  async ({ issueId }) => {
+    const query = `
+      query IssueComments($id: String!) {
+        issue(id: $id) {
+          comments(orderBy: createdAt) {
+            nodes { id body createdAt }
+          }
+        }
+      }
+    `;
+    const data = await linearQuery<{
+      issue: { comments: { nodes: Array<{ id: string; body: string; createdAt: string }> } };
+    }>(query, { id: issueId });
+
+    const comments = data.issue.comments.nodes;
+    if (!comments.length) {
+      return { content: [{ type: 'text' as const, text: 'No comments.' }] };
+    }
+    const lines = comments.map((c) => `[${c.id}] ${c.createdAt}\n${c.body}`);
+    return { content: [{ type: 'text' as const, text: lines.join('\n\n---\n\n') }] };
+  },
+);
+
+// ── create_comment ────────────────────────────────────────────────────────────
+
+server.registerTool(
+  'create_comment',
+  {
+    description: 'Post a comment on a Linear issue.',
+    inputSchema: {
+      issueId: z.string().describe('Linear issue ID'),
+      body: z.string().describe('Comment body (markdown supported)'),
+    },
+  },
+  async ({ issueId, body }) => {
+    const mutation = `
+      mutation CreateComment($input: CommentCreateInput!) {
+        commentCreate(input: $input) {
+          comment { id createdAt }
+        }
+      }
+    `;
+    const data = await linearQuery<{
+      commentCreate: { comment: { id: string; createdAt: string } };
+    }>(mutation, { input: { issueId, body } });
+
+    const { comment } = data.commentCreate;
+    return {
+      content: [{ type: 'text' as const, text: `Comment posted: id=${comment.id} at ${comment.createdAt}` }],
     };
   },
 );

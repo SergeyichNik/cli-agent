@@ -24,7 +24,11 @@
     "demo:day29:full": "tsx demo/code-review-day29.ts --full",
     "demo:day30": "tsx demo/service-day30.ts",
     "demo:day31": "tsx demo/dev-assistant-day31.ts",
-    "demo:day32": "tsx demo/pr-review-day32.ts"
+    "demo:day32": "tsx demo/pr-review-day32.ts",
+    "demo:day33": "tsx demo/run-day33-multi.ts",
+    "demo:day33:support": "tsx demo/support-agent-day33.ts",
+    "demo:day33:user": "tsx demo/user-agent-day33.ts",
+    "demo:day33:oneshot": "tsx demo/support-assistant-day33.ts"
   },
   "repository": {
     "type": "git",

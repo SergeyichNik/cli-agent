@@ -12,6 +12,7 @@ export const SecretsSchema = z.object({
   deepseek: ProviderSecretsSchema.optional(),
   lmstudio: ProviderSecretsSchema.optional(),
   linear: z.object({ apiKey: z.string().optional() }).optional(),
+  linearUser: z.object({ apiKey: z.string().optional() }).optional(),
   github: z.object({ apiKey: z.string().optional() }).optional(),
 });
 
