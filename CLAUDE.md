@@ -30,7 +30,9 @@ The folder where `agent init` was run = sandbox root. Agent cannot access files 
 ### MCP servers (auto-registered, built-in)
 - `mcp-servers/files/` → file CRUD within sandbox
 - `mcp-servers/git/` → git operations (status, diff, log, add, commit, branch, checkout, init)
-- `mcp-servers/linear/` → Linear integration (only if LINEAR_API_KEY set)
+- `mcp-servers/search/` → search across project files and documentation
+- `mcp-servers/github/` → GitHub API integration (PR review, issues, etc.)
+- `mcp-servers/linear/` → Linear integration (only if `LINEAR_API_KEY` is set in secrets or env)
 
 ### Key config files
 - `src/agent/config.ts` → ProjectConfig schema (non-sensitive project settings)

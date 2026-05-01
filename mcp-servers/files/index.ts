@@ -122,5 +122,110 @@ server.registerTool('copy_file', {
   return { content: [{ type: 'text' as const, text: `Copied ${src} → ${dest}` }] };
 });
 
+// ── Helpers for grep_files / find_files ────────────────────────────────────
+
+function globToRegex(glob: string): RegExp {
+  const regexStr = glob
+    .replace(/\./g, '\\.')
+    .replace(/\*\*/g, '\x00')
+    .replace(/\*/g, '[^/]*')
+    .replace(/\x00/g, '.*')
+    .replace(/\?/g, '[^/]');
+  return new RegExp(`^${regexStr}$`);
+}
+
+async function walkFiles(dir: string, results: string[] = []): Promise<string[]> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === 'node_modules' || entry.name === '.git') continue;
+      await walkFiles(full, results);
+    } else if (entry.isFile()) {
+      results.push(full);
+    }
+  }
+  return results;
+}
+
+// ── find_files ──────────────────────────────────────────────────────────────
+
+server.registerTool('find_files', {
+  description: 'Find files matching a glob pattern inside the sandbox. Skips node_modules and .git.',
+  inputSchema: {
+    glob: z.string().describe('Glob pattern, e.g. "**/*.ts", "src/**/*.md", "*.json"'),
+  },
+}, async ({ glob }) => {
+  const allFiles = await walkFiles(sandboxDir);
+  const pattern = globToRegex(glob);
+  const matched = allFiles
+    .map((f) => path.relative(sandboxDir, f))
+    .filter((rel) => pattern.test(rel))
+    .sort();
+  const text = matched.length
+    ? matched.join('\n')
+    : `No files match pattern: ${glob}`;
+  return { content: [{ type: 'text' as const, text }] };
+});
+
+// ── grep_files ──────────────────────────────────────────────────────────────
+
+server.registerTool('grep_files', {
+  description: 'Search for a text or regex pattern across files in the sandbox. Returns matching lines with file path and line number.',
+  inputSchema: {
+    pattern: z.string().describe('Text string or regex pattern to search for'),
+    glob: z.string().optional().describe('Glob filter for files to search, e.g. "**/*.ts" (default: all files)'),
+    isRegex: z.boolean().optional().describe('Treat pattern as a regular expression (default: false)'),
+    contextLines: z.number().optional().describe('Number of surrounding lines to include around each match (default: 0)'),
+    maxResults: z.number().optional().describe('Maximum number of matching lines to return (default: 100)'),
+  },
+}, async ({ pattern, glob, isRegex = false, contextLines = 0, maxResults = 100 }) => {
+  const allFiles = await walkFiles(sandboxDir);
+  const fileFilter = glob ? globToRegex(glob) : null;
+  const candidates = allFiles
+    .map((f) => ({ abs: f, rel: path.relative(sandboxDir, f) }))
+    .filter(({ rel }) => !fileFilter || fileFilter.test(rel));
+
+  const searchRegex = isRegex
+    ? new RegExp(pattern, 'g')
+    : new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+
+  const output: string[] = [];
+  let totalMatches = 0;
+
+  for (const { abs, rel } of candidates) {
+    if (totalMatches >= maxResults) break;
+    let content: string;
+    try {
+      content = await readFile(abs, 'utf-8');
+    } catch {
+      continue; // skip binary or unreadable files
+    }
+    // skip likely binary files
+    if (content.includes('\x00')) continue;
+
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      searchRegex.lastIndex = 0;
+      if (searchRegex.test(lines[i])) {
+        if (totalMatches >= maxResults) break;
+        const from = Math.max(0, i - contextLines);
+        const to = Math.min(lines.length - 1, i + contextLines);
+        for (let j = from; j <= to; j++) {
+          const marker = j === i ? '>' : ' ';
+          output.push(`${rel}:${j + 1}:${marker} ${lines[j]}`);
+        }
+        if (contextLines > 0) output.push('---');
+        totalMatches++;
+      }
+    }
+  }
+
+  const text = output.length
+    ? output.join('\n')
+    : `No matches found for: ${pattern}`;
+  return { content: [{ type: 'text' as const, text }] };
+});
+
 const transport = new StdioServerTransport();
 await server.connect(transport);

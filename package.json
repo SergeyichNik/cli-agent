@@ -28,7 +28,10 @@
     "demo:day33": "tsx demo/run-day33-multi.ts",
     "demo:day33:support": "tsx demo/support-agent-day33.ts",
     "demo:day33:user": "tsx demo/user-agent-day33.ts",
-    "demo:day33:oneshot": "tsx demo/support-assistant-day33.ts"
+    "demo:day33:oneshot": "tsx demo/support-assistant-day33.ts",
+    "demo:day34": "tsx demo/file-assistant-day34.ts",
+    "demo:day34:A": "tsx demo/file-assistant-day34.ts -- --scenario A",
+    "demo:day34:B": "tsx demo/file-assistant-day34.ts -- --scenario B"
   },
   "repository": {
     "type": "git",
